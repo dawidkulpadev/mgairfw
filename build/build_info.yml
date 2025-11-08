@@ -1,0 +1,61 @@
+cmake:
+  application:
+    configuration-dir: '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/mgairfw'
+    source-dir: '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/mgairfw'
+  board:
+    name: 'mgair_v3'
+    path:
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/boards/dawidkulpa/mgair_v3'
+    qualifiers: 'nrf52840'
+    revision: ''
+  devicetree:
+    bindings-dirs:
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/bindings'
+    files:
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/boards/dawidkulpa/mgair_v3/mgair_v3.dts'
+    include-dirs:
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/modules/hal/ambiq/dts'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/modules/hal/atmel/include'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/modules/hal/bouffalolab/include'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/modules/hal/bouffalolab/include/zephyr'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/modules/hal/gigadevice/include'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/modules/hal/microchip/include'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/modules/hal/microchip/dts'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/modules/hal/nuvoton/dts'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/modules/hal/nxp/dts'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/modules/hal/stm32/dts'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/modules/hal/ti/dts'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/common'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/vendor'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/rx'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/x86'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/xtensa'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/sparc'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/riscv'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/posix'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/arm64'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/arm'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/arc'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts'
+  kconfig:
+    files:
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/boards/dawidkulpa/mgair_v3/mgair_v3_defconfig'
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/mgairfw/prj.conf'
+    user-files:
+     - '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/mgairfw/prj.conf'
+  toolchain:
+    name: 'zephyr'
+    path: '/home/dkulpa/zephyr-sdk-0.17.4'
+  vendor-specific:
+    nordic:
+      svdfile: '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/modules/hal/nordic/nrfx/mdk/nrf52840.svd'
+  zephyr:
+    version: '4.2.99'
+    zephyr-base: '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr'
+version: '0.1.0'
+west:
+  command: '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/.venv/bin/west build -p always -b mgair_v3/nrf52840'
+  topdir: '/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace'
+  version: '1.5.0'

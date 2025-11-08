@@ -1,0 +1,33 @@
+empty_file.o: \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/misc/empty_file.c \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/boards/dawidkulpa/mgair_v3/mgair_v3.dts \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/arm/nordic/nrf52840_qiaa.dtsi \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/common/mem.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/arm/nordic/nrf52840.dtsi \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/arm/armv7-m.dtsi \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/common/skeleton.dtsi \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/vendor/nordic/nrf_common.dtsi \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/dt-bindings/adc/adc.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/dt-bindings/dt-util.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/sys/util_macro.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/sys/util_internal.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/sys/util_loops.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/sys/util_listify.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/sys/util_internal_is_eq.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/sys/util_internal_util_inc.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/sys/util_internal_util_dec.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/sys/util_internal_util_x2.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/dt-bindings/gpio/gpio.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/dt-bindings/i2c/i2c.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/dt-bindings/input/input-event-codes.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/dt-bindings/pinctrl/nrf-pinctrl.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/dt-bindings/pwm/pwm.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/dt-bindings/sensor/qdec_nrf.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/common/freq.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/dts/arm/nordic/override.dtsi \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/dt-bindings/adc/nrf-saadc-v3.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/dt-bindings/adc/nrf-saadc-v2.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/dt-bindings/adc/nrf-saadc.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/include/zephyr/dt-bindings/regulator/nrf5x.h \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/boards/dawidkulpa/mgair_v3/mgair_v3_partition.dtsi \
+ /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/boards/dawidkulpa/mgair_v3/mgair_v3-pinctrl.dtsi

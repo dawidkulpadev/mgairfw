@@ -1,0 +1,1 @@
+"mcuboot":"/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/bootloader/mcuboot":"/home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/bootloader/mcuboot/boot/zephyr/sysbuild"

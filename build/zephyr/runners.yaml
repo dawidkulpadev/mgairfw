@@ -1,0 +1,43 @@
+# Available runners configured by board.cmake.
+runners:
+- pyocd
+- openocd
+
+# Default flash runner if --runner is not given.
+flash-runner: pyocd
+
+# Default debug runner if --runner is not given.
+debug-runner: pyocd
+
+# Common runner configuration values.
+config:
+  board_dir: /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/zephyr/boards/dawidkulpa/mgair_v3
+  # Build outputs:
+  elf_file: zephyr.elf
+  hex_file: /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/mgairfw/build/zephyr/zephyr.signed.hex
+  bin_file: /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/mgairfw/build/zephyr/zephyr.signed.bin
+  # Host tools:
+  gdb: /home/dkulpa/zephyr-sdk-0.17.4/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb
+  openocd: /home/dkulpa/zephyr-sdk-0.17.4/sysroots/x86_64-pokysdk-linux/usr/bin/openocd
+  openocd_search:
+    - /home/dkulpa/zephyr-sdk-0.17.4/sysroots/x86_64-pokysdk-linux/usr/share/openocd/scripts
+
+# Runner specific arguments
+args:
+  pyocd:
+    - --dt-flash=y
+    - --target=nrf52840
+    - --frequency=4000000
+  openocd:
+    - --cmd-load
+    - flash write_image erase
+    - --cmd-verify
+    - verify_image
+    - --cmd-pre-init
+    - set WORKAREASIZE 0x4000
+    - --cmd-pre-init
+    - source [find interface/jlink.cfg]
+    - --cmd-pre-init
+    - transport select swd
+    - --cmd-pre-init
+    - source [find target/nrf52.cfg]

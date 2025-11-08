@@ -1,0 +1,5 @@
+west:
+  command: /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace/.venv/bin/west
+    build -p always -b mgair_v3/nrf52840
+  topdir: /home/dkulpa/ToolBox/projects/MioGiapicco/Software/firmwares/mgairfw-zephyr-workspace
+  version: 1.5.0
