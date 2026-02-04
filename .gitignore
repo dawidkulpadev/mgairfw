@@ -1,0 +1,12 @@
+build/
+build*/
+
+*~
+*.swp
+*.bak
+*.conf.bak
+
+.west/
+
+venv/
+.venv/

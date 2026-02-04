@@ -1,0 +1,19 @@
+identifier: nrf52840dk/nrf52840
+name: nRF52840-DK-NRF52840
+type: mcu
+arch: arm
+ram: 256
+flash: 1024
+toolchain:
+  - zephyr
+  - gnuarmemb
+supported:
+  - adc
+  - ble
+  - counter
+  - gpio
+  - i2c
+  - pwm
+  - watchdog
+  - netif:openthread
+vendor: dawidkulpa

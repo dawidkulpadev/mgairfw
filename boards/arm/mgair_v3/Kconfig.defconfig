@@ -1,0 +1,6 @@
+if BOARD_MGAIR_V3
+
+config HW_STACK_PROTECTION
+	default ARCH_HAS_STACK_PROTECTION
+
+endif

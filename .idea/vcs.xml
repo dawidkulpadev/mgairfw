@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/bootloader/mcuboot" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/bsim_hw_models/nrf_hw_models" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/crypto/mbedtls" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/crypto/oberon-psa-crypto" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/debug/mipi-sys-t" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/hal/cirrus-logic" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/hal/cmsis_6" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/hal/libmetal" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/hal/nordic" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/hal/st" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/hal/tdk" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/hal/wurthelektronik" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/lib/chre" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/lib/matter" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/lib/matter/third_party/jsoncpp/repo" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/lib/matter/third_party/nlassert/repo" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/lib/matter/third_party/nlio/repo" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/lib/matter/third_party/pigweed/repo" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/lib/memfault-firmware-sdk" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/lib/open-amp" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/lib/picolibc" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/modules/lib/zscilib" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/nrf" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/nrfxlib" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../../../../programs/nRFConnectSDK/ncs/v3.2.1/zephyr" vcs="Git" />
+  </component>
+</project>

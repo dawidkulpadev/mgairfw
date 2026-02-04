@@ -1,0 +1,6 @@
+board:
+  name: mgair_v3
+  full_name: MioGiapicco Air v3
+  vendor: dawidkulpa
+  socs:
+  - name: nrf52840
