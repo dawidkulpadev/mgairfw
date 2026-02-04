@@ -1,12 +1,13 @@
 build/
 build*/
 cmake-build-default-nrf-connect-sdk/
-./root-rsa-2048.pem
+
 
 *~
 *.swp
 *.bak
 *.conf.bak
+*.pem
 
 .west/
 
