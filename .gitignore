@@ -1,5 +1,7 @@
 build/
 build*/
+cmake-build-default-nrf-connect-sdk/
+./root-rsa-2048.pem
 
 *~
 *.swp
@@ -10,5 +12,3 @@ build*/
 
 venv/
 .venv/
-
-root-rsa-2048.pem
