@@ -1,6 +1,22 @@
-//
-// Created by dkulpa on 11.10.2023.
-//
+/**
+    MioGiapicco Light Firmware - Firmware for Light Device of MioGiapicco system
+    Copyright (C) 2026  Dawid Kulpa
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+    Please feel free to contact me at any time by email <dawidkulpadev@gmail.com>
+*/
 
 #include "SuperString.h"
 
@@ -23,7 +39,7 @@ StringList split(const std::string &s, char d){
     return parts;
 }
 
-StringList splitCsvRespectingQuotes(const std::string& s) {
+StringList splitCsvRespectingQuotes(const std::string& s, char delim) {
     std::vector<std::string> out;
     std::string cur;
     bool inQuotes = false;
@@ -35,7 +51,7 @@ StringList splitCsvRespectingQuotes(const std::string& s) {
 
         if (inQuotes) {
             if (ch == '"') {
-                bool nextIsSepOrEnd = (i + 1 == n) || (s[i + 1] == ',');
+                bool nextIsSepOrEnd = (i + 1 == n) || (s[i + 1] == delim);
                 if (nextIsSepOrEnd) {
                     inQuotes = false;
                     continue;
@@ -46,7 +62,7 @@ StringList splitCsvRespectingQuotes(const std::string& s) {
                 cur.push_back(ch);
             }
         } else {
-            if (ch == ',') {
+            if (ch == delim) {
                 out.push_back(cur);
                 cur.clear();
                 startedWithQuote = false;

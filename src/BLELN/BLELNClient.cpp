@@ -1,13 +1,34 @@
+/**
+    MioGiapicco Light Firmware - Firmware for Light Device of MioGiapicco system
+    Copyright (C) 2026  Dawid Kulpa
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+    Please feel free to contact me at any time by email <dawidkulpadev@gmail.com>
+*/
+
 #include "BLELNClient.h"
+#include "Encryption.h"
+#include "BLELNConnCtx.h"
+#include "SuperString.h"
 #include <cstring>
 
-K_THREAD_STACK_DEFINE(g_client_rx_stack, 3072);
+K_THREAD_STACK_DEFINE(g_client_rx_stack, 2272);
 
 
-// --- statyczne wskaźniki do instancji (1 klient na aplikację)
-static BLELNClient* g_client_singleton = nullptr;
+static BLELNClient* instance = nullptr;
 
-// --- Auth callbacks (passkey)
 static const struct bt_conn_auth_cb s_auth_cb = {
         .passkey_entry = BLELNClient::auth_passkey_entry,
         .cancel        = BLELNClient::auth_cancel,
@@ -20,36 +41,32 @@ static struct bt_conn_cb s_conn_cb = {
 
 struct AdvMatchCtx {
     bool* has;
-    const bt_uuid_128* uuid; // oczekujemy LE (LSB-first) tak jak w Zephyr
+    const bt_uuid_128* uuid;
 };
 
 extern "C" bool adv_parse_uuid128_cb(struct bt_data* data, void* user_data) {
     auto* c = static_cast<AdvMatchCtx*>(user_data);
     if (!c || !c->has || !c->uuid) return true;
 
-    // Szukamy tylko pól z 128-bit UUID
     if (data->type != BT_DATA_UUID128_ALL && data->type != BT_DATA_UUID128_SOME) {
         return true;
     }
 
-    // Bardzo defensywnie: nic poza buforem
     const uint8_t* p = static_cast<const uint8_t*>(data->data);
     size_t len = data->data_len;
     while (len >= 16) {
-        // porównujemy dokładnie 16 bajtów
         if (memcmp(p, c->uuid->val, 16) == 0) {
             *(c->has) = true;
-            return false; // przerwij parse (nie trzeba dalej)
+            return false;
         }
         p += 16;
         len -= 16;
     }
-    return true; // kontynuuj z kolejnymi AD strukturami
+    return true;
 }
 
 // ===== Utils =====
 bool BLELNClient::parse_uuid128(const std::string& s, bt_uuid_128* out) {
-    // akceptujemy format XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
     if (s.size() != 36) return false;
     uint8_t bytes[16]{};
     auto hex = [](char c)->int{
@@ -71,31 +88,27 @@ bool BLELNClient::parse_uuid128(const std::string& s, bt_uuid_128* out) {
         if (h<0||l<0) return false;
         bytes[i] = (uint8_t)((h<<4)|l);
     }
-    // Zephyr używa LE w polu uuid_128.val (LSB-first)
-    // Wejściowy string jest MSB-first, więc odwróć:
     for (int i=0;i<16;i++) out->val[i] = bytes[15 - i];
     out->uuid.type = BT_UUID_TYPE_128;
     return true;
 }
 
-BLELNClient* BLELNClient::self_from_conn(struct bt_conn* c) {
-    return g_client_singleton;
+
+
+
+void BLELNClient::init() {
+    instance= new BLELNClient();
+    Encryption::randomizer_init();
 }
 
-// ===== Start/Stop =====
+void BLELNClient::deinit() {
+    delete instance;
+}
+
+
 void BLELNClient::start(const std::string& name, std::function<void(const std::string&)> onServerResponse) {
-    g_client_singleton = this;
-
-    // BT on
-    int err = bt_enable(nullptr);
-    if (err) {
-        printk("bt_enable err=%d\r\n", err);
-        return;
-    }
-
-    err = settings_load();
-    printk("settings_load -> %d\n", err);
-
+    if(instance == nullptr)
+        BLELNClient::init();
 
     bt_conn_cb_register(&s_conn_cb);
     bt_conn_auth_cb_register(&s_auth_cb);
@@ -103,71 +116,26 @@ void BLELNClient::start(const std::string& name, std::function<void(const std::s
     bt_le_oob oob{};
     bt_set_name(name.c_str());
 
-    // RX fifo/thread
-    k_fifo_init(&rx_fifo);
-    runRxWorker = true;
-    rxWorkerPaused= true;
-    k_thread_create(&rx_thread, g_client_rx_stack, K_THREAD_STACK_SIZEOF(g_client_rx_stack),
+    k_fifo_init(&instance->workerActionQueue);
+    instance->runWorker = true;
+    k_thread_create(&instance->rx_thread, g_client_rx_stack, K_THREAD_STACK_SIZEOF(g_client_rx_stack),
                     [](void* p1, void*, void*) {
-                        static_cast<BLELNClient*>(p1)->rxWorker();
+                        instance->worker();
                     },
-                    this, nullptr, nullptr, K_PRIO_COOP(8), 0, K_NO_WAIT);
+                    nullptr, nullptr, nullptr, K_PRIO_COOP(8), 0, K_NO_WAIT);
 
-    onMsgRx = std::move(onServerResponse);
+    instance->onMsgRx = std::move(onServerResponse);
 }
 
 void BLELNClient::stop() {
-    // zatrzymaj scan
-    if (scanning) {
-        bt_le_scan_stop();
-        scanning = false;
-    }
 
-    // wyłącz subskrypcje
-    if (conn && sub_keyex.value_handle) {
-        bt_gatt_unsubscribe(conn, &sub_keyex);
-    }
-    if (conn && sub_data.value_handle) {
-        bt_gatt_unsubscribe(conn, &sub_data);
-    }
-
-    // zamknij połączenie
-    if (conn) {
-        bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-        bt_conn_unref(conn);
-        conn = nullptr;
-    }
-
-    // rx thread stop
-    runRxWorker = false;
-    // wrzuć pusty element by obudzić wątek
-    k_fifo_put(&rx_fifo, nullptr);
-
-    have_handles = false;
-    h_keyex_tx = h_keyex_rx = h_data_tx = h_data_rx = 0;
-    s_sid = 0; s_ctr_s2c = s_ctr_c2s = 0;
-    memset(s_sessKey_s2c, 0, sizeof(s_sessKey_s2c));
-    memset(s_sessKey_c2s, 0, sizeof(s_sessKey_c2s));
-    memset(s_cliPub, 0, sizeof(s_cliPub));
-    memset(s_srvPub, 0, sizeof(s_srvPub));
-    memset(s_cliNonce, 0, sizeof(s_cliNonce));
-    memset(s_srvNonce, 0, sizeof(s_srvNonce));
-    memset(s_salt, 0, sizeof(s_salt));
-    s_epoch = 0;
-    g_keyexPayload.clear();
-    g_keyexReady = false;
-
-    onMsgRx = nullptr;
-    onScanResult = nullptr;
-    onConRes = nullptr;
 }
 
-// ===== Scan =====
 void BLELNClient::startServerSearch(uint32_t durationMs,
                                     const std::string& serverUUID,
                                     const std::function<void(const bt_addr_le_t* addr)>& onResult) {
-    onScanResult = onResult;
-    scanning = true;
+    instance->onScanResult = onResult;
+    instance->scanning = true;
 
     static const struct bt_le_scan_param params = {
             .type       = BT_LE_SCAN_TYPE_ACTIVE,
@@ -182,36 +150,360 @@ void BLELNClient::startServerSearch(uint32_t durationMs,
     int err = bt_le_scan_start(&params, BLELNClient::device_found_cb_new);
     if (err) {
         printk("scan start err=%d\r\n", err);
-        scanning = false;
-        if (onScanResult) onScanResult(nullptr);
+        instance->scanning = false;
+        if (instance->onScanResult) instance->onScanResult(nullptr);
         return;
     }
 
-    // prosty timeout
     k_work_delayable timeout_work{};
     k_work_init_delayable(&timeout_work, [](k_work* w){});
-    // zamiast k_work tu: prosta zwłoka i stop
     k_sleep(K_MSEC(durationMs));
-    if (scanning) {
+    if (instance->scanning) {
         bt_le_scan_stop();
-        scanning = false;
-        if (onScanResult) onScanResult(nullptr);
+        instance->scanning = false;
+        if (instance->onScanResult)
+            instance->onScanResult(nullptr);
     }
 }
 
+void BLELNClient::beginConnect(const bt_addr_le_t* addr, const std::function<void(bool, int)>& onConnectResult) {
+    instance->onConRes = onConnectResult;
+
+    bt_conn_le_create_param create_param = {
+            .options = BT_CONN_LE_OPT_NONE,
+            .interval = BT_GAP_INIT_CONN_INT_MIN,
+            .window   = BT_GAP_SCAN_FAST_WINDOW,
+            .interval_coded = 0,
+            .window_coded   = 0,
+            .timeout = 0,
+    };
+    bt_le_conn_param conn_param = {
+            .interval_min = 24,
+            .interval_max = 40,
+            .latency = 0,
+            .timeout = 400
+    };
+
+    int err = bt_conn_le_create(addr, &create_param, &conn_param, &instance->conn);
+    if (err) {
+        if (instance->onConRes) instance->onConRes(false, err);
+        return;
+    }
+}
+
+bool BLELNClient::sendEncrypted(const std::string& msg) {
+    instance->appendActionToQueue(BLELN_WORKER_ACTION_SEND_MESSAGE, 0,
+                        reinterpret_cast<const uint8_t *>(msg.data()), msg.size());
+    return true;
+}
+
+bool BLELNClient::isScanning() { return instance->scanning; }
+
+bool BLELNClient::isConnected() { return instance->conn != nullptr; }
+
+void BLELNClient::appendActionToQueue(uint8_t type, uint16_t conH, const uint8_t *data, size_t dataLen) {
+    uint8_t *heapBuf= nullptr;
+
+    if(data!= nullptr) {
+        heapBuf = (uint8_t*)k_malloc(dataLen);
+        if (!heapBuf) return;
+        memcpy(heapBuf, data, dataLen);
+    } else {
+        dataLen=0;
+    }
+
+    auto* pkt= (BLELNWorkerAction*) k_malloc(sizeof(BLELNWorkerAction));
+    if (!pkt) { k_free(heapBuf); return; }
+
+    pkt->type= type;
+    pkt->connH= conH;
+    pkt->dlen= dataLen;
+    pkt->d= heapBuf;
+    k_fifo_put(&workerActionQueue, pkt);
+}
+
+void BLELNClient::worker() {
+    while(runWorker){
+        auto *action = static_cast<BLELNWorkerAction *>(k_fifo_get(&workerActionQueue, K_MSEC(1)));
+
+        if(action) {
+            if (action->type == BLELN_WORKER_ACTION_REGISTER_CONNECTION) {
+                worker_registerConnection(action->connH);
+            } else if(action->type == BLELN_WORKER_ACTION_SERVICE_DISCOVERED){
+                memset(&sub_keyex, 0, sizeof(sub_keyex));
+                sub_keyex.ccc_handle = BT_GATT_AUTO_DISCOVER_CCC_HANDLE;
+                sub_keyex.value_handle = h_keyex_tx;
+                sub_keyex.notify = notify_keyex_cb;
+                sub_keyex.end_handle= h_data_tx;
+                sub_keyex.value = BT_GATT_CCC_NOTIFY;
+                sub_keyex.disc_params= &keyex_ccc_disc_params;
+                int r= bt_gatt_subscribe(conn, &sub_keyex);
+                printk("Subscribe key ex: %d\r\n", r);
+
+                memset(&sub_data, 0, sizeof(sub_data));
+                sub_data.ccc_handle = BT_GATT_AUTO_DISCOVER_CCC_HANDLE;
+                sub_data.value_handle = h_data_tx;
+                sub_data.notify = notify_data_cb;
+                sub_data.value = BT_GATT_CCC_NOTIFY;
+                sub_data.end_handle= 0xffff;
+                sub_data.disc_params= &data_ccc_disc_params;
+                r= bt_gatt_subscribe(conn, &sub_data);
+                printk("Subscribe data: %d\r\n", r);
+
+                connCtx->setState(BLELNConnCtx::State::WaitingForKey);
+            } else if (action->type == BLELN_WORKER_ACTION_DELETE_CONNECTION) {
+                worker_deleteConnection();
+            } else if(action->type==BLELN_WORKER_ACTION_SEND_MESSAGE){
+                worker_sendMessage(action->d, action->dlen);
+            } else if(action->type==BLELN_WORKER_ACTION_PROCESS_KEY_RX){
+                worker_processKeyRx(action->d, action->dlen);
+            } else if(action->type==BLELN_WORKER_ACTION_PROCESS_DATA_RX){
+                worker_processDataRx(action->d, action->dlen);
+            }
+
+            k_free(action->d);
+            k_free(action);
+        }
+
+        if(lastWaterMarkPrint+10000 < k_uptime_get()) {
+            size_t unused_bytes = 0;
+            int ret = k_thread_stack_space_get(k_current_get(), &unused_bytes);
+            if(ret == 0){
+                printk("[D] BLELNClient - stack free: %u\n\r", unused_bytes);
+            }
+
+            lastWaterMarkPrint= k_uptime_get();
+        }
+
+        // Pause task
+        if(k_fifo_is_empty(&workerActionQueue)){
+            k_sleep(K_MSEC(100));
+        } else {
+            k_sleep(K_MSEC(5));
+        }
+    }
+}
+
+
+void BLELNClient::worker_registerConnection(uint16_t h) {
+    if (onConRes) {
+        onConRes(true, 0);
+    }
+    printk("[D] BLELNClient - Client connected\n");
+    connCtx = new BLELNConnCtx(h);
+
+    if(discover()){
+
+    } else {
+        printk("[E] BLELNClient - discover failed\n");
+    }
+}
+
+void BLELNClient::worker_deleteConnection() {
+    if (connCtx) {
+        delete connCtx;
+        connCtx = nullptr; // Ważne!
+    }
+}
+
+void BLELNClient::worker_sendMessage(uint8_t *data, size_t dataLen) {
+    std::string msg(reinterpret_cast<char*>(data), dataLen);
+    std::string encMsg;
+
+    if(connCtx!= nullptr and connCtx->getSessionEnc()->encryptMessage(msg, encMsg)){
+        int err = bt_gatt_write_without_response(conn, h_keyex_rx, encMsg.data(), encMsg.size(), false);
+        if (err) {
+            // TODO: Handle error
+        }
+    }
+}
+
+void BLELNClient::worker_processKeyRx(uint8_t *data, size_t dataLen) {
+    if(connCtx!= nullptr){
+        if(connCtx->getState()==BLELNConnCtx::State::WaitingForKey){
+            printk("[D] BLELNClient - Received servers key\n");
+            if(handshake(data, dataLen)){
+                connCtx->setState(BLELNConnCtx::State::WaitingForCert);
+            } else {
+                printk("[E] BLELNClient - handshake failed\n");
+                disconnect(BT_HCI_ERR_AUTH_FAIL);
+                connCtx->setState(BLELNConnCtx::State::AuthFailed);
+            }
+        } else if(connCtx->getState()==BLELNConnCtx::State::WaitingForCert){
+            std::string plainKeyMsg;
+            if (connCtx->getSessionEnc()->decryptMessage(data, dataLen, plainKeyMsg)) {
+                StringList parts= splitCsvRespectingQuotes(plainKeyMsg);
+                if(parts[0]==BLELN_MSG_TITLE_CERT and parts.size()==3){
+
+                    uint8_t gen;
+                    uint8_t fMac[6];
+                    uint8_t fPubKey[BLELN_DEV_PUB_KEY_LEN];
+
+                    if(authStore.verifyCert(parts[1], parts[2], &gen, fMac, 6, fPubKey, 64)){
+                        connCtx->setCertData(fMac, fPubKey);
+                        sendCertToServer(connCtx);
+                        connCtx->setState(BLELNConnCtx::State::ChallengeResponseCli);
+                    } else {
+                        disconnect(BT_HCI_ERR_AUTH_FAIL);
+                        connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                        printk("[E] BLELNClient - WaitingForCert - invalid cert\n");
+                    }
+                } else {
+                    printk("[E] BLELNClient - WaitingForCert - wrong message\n");
+                    disconnect(BT_HCI_ERR_AUTH_FAIL);
+                    connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                }
+            } else {
+                disconnect(BT_HCI_ERR_AUTH_FAIL);
+                connCtx->setState(BLELNConnCtx::State::AuthFailed);
+            }
+        } else if(connCtx->getState()==BLELNConnCtx::State::ChallengeResponseCli) {
+            std::string plainKeyMsg;
+            if (connCtx->getSessionEnc()->decryptMessage(data, dataLen, plainKeyMsg)) {
+                StringList parts = splitCsvRespectingQuotes(plainKeyMsg);
+                if (parts[0] == BLELN_MSG_TITLE_CHALLENGE_RESPONSE_NONCE and parts.size() == 2) {
+                    sendChallengeNonceSign(connCtx, parts[1]);
+                    connCtx->setState(BLELNConnCtx::State::ChallengeResponseSer);
+                } else {
+                    disconnect(BT_HCI_ERR_AUTH_FAIL);
+                    connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                }
+            } else {
+                disconnect(BT_HCI_ERR_AUTH_FAIL);
+                connCtx->setState(BLELNConnCtx::State::AuthFailed);
+            }
+        } else if(connCtx->getState()==BLELNConnCtx::State::ChallengeResponseSer) {
+            std::string plainKeyMsg;
+            if (connCtx->getSessionEnc()->decryptMessage(data, dataLen, plainKeyMsg)) {
+                StringList parts = splitCsvRespectingQuotes(plainKeyMsg);
+                if (parts[0] == BLELN_MSG_TITLE_CHALLENGE_RESPONSE_ANSW and parts.size() == 2) {
+                    uint8_t nonceSign[BLELN_NONCE_SIGN_LEN];
+                    Encryption::base64Decode(parts[1], nonceSign, BLELN_NONCE_SIGN_LEN);
+                    if(connCtx->verifyChallengeResponseAnswer(nonceSign)){
+                        std::string msg=BLELN_MSG_TITLE_AUTH_OK;
+                        msg.append(",1");
+                        std::string encMsg;
+                        if(connCtx->getSessionEnc()->encryptMessage(msg, encMsg)) {
+                            connCtx->setState(BLELNConnCtx::State::Authorised);
+                            printk("[D] BLELNClient - auth success\n");
+                            printk("[D] BLELNClient - client %d live for %llu ms\r\n", connCtx->getHandle(), connCtx->getTimeOfLife());
+                            int err = bt_gatt_write_without_response(conn, h_keyex_rx, encMsg.data(), encMsg.size(), false);
+                            if (err) {
+                                // TODO: Handle error
+                            }
+                        } else {
+                            printk("[E] BLELNClient - failed encrypting cert msg\n");
+                        }
+                    } else {
+                        printk("[E] BLELNClient - ChallengeResponseSeri - invalid sign\n");
+                        disconnect(BT_HCI_ERR_AUTH_FAIL);
+                        connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                    }
+                } else {
+                    disconnect(BT_HCI_ERR_AUTH_FAIL);
+                    connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                }
+            } else {
+                disconnect(BT_HCI_ERR_AUTH_FAIL);
+                connCtx->setState(BLELNConnCtx::State::AuthFailed);
+            }
+        }
+    }
+}
+
+void BLELNClient::worker_processDataRx(uint8_t *data, size_t dataLen) {
+    if(connCtx!= nullptr and connCtx->getSessionEnc()->getSessionId() != 0) {
+        if(connCtx->getState()==BLELNConnCtx::State::Authorised) {
+            if (dataLen >= 4 + 12 + 16) {
+                std::string plain;
+                if (connCtx->getSessionEnc()->decryptMessage(data, dataLen, plain)) {
+                    if (onMsgRx) {
+                        onMsgRx(plain);
+                    }
+                }
+            }
+        } else {
+            disconnect(BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+        }
+    }
+}
+
+/*** Connection context not protected! */
+void BLELNClient::sendChallengeNonceSign(BLELNConnCtx *cx, const std::string &nonceB64) {
+    uint8_t nonceRaw[BLELN_TEST_NONCE_LEN];             // Servers nonce raw bytes
+    uint8_t friendsNonceSign[BLELN_NONCE_SIGN_LEN];     // Servers nonce sing I have created
+
+    // Sign nonce
+    Encryption::base64Decode(nonceB64, nonceRaw, BLELN_TEST_NONCE_LEN);
+    authStore.signData(nonceRaw, BLELN_TEST_NONCE_LEN, friendsNonceSign);
+
+    // Create clients nonce
+    cx->generateTestNonce();
+    std::string myNonceB64= cx->getTestNonceBase64();
+
+    // Create BLE message
+    std::string msg= BLELN_MSG_TITLE_CHALLENGE_RESPONSE_ANSW_AND_NONCE;
+    std::string friendsNonceSignB64= Encryption::base64Encode(friendsNonceSign, BLELN_NONCE_SIGN_LEN);
+    msg.append(",").append(friendsNonceSignB64);
+    msg.append(",").append(myNonceB64);
+
+    std::string encMsg;
+    if(cx->getSessionEnc()->encryptMessage(msg, encMsg)) {
+        int err = bt_gatt_write_without_response(conn, h_keyex_rx, encMsg.data(), encMsg.size(), false);
+        if (err) {
+            // TODO: Handle error
+        }
+    } else {
+        printk("[E] BLELNClient - failed encrypting cert msg\n");
+    }
+}
+
+/*** Connection context not protected! */
+void BLELNClient::sendCertToServer(BLELNConnCtx *cx) {
+    std::string msg=BLELN_MSG_TITLE_CERT;
+    msg.append(",").append(authStore.getSignedCert());
+
+    std::string encMsg;
+    if(cx->getSessionEnc()->encryptMessage(msg, encMsg)) {
+        int err = bt_gatt_write_without_response(conn, h_keyex_rx, encMsg.data(), encMsg.size(), false);
+        if (err) {
+            // TODO: Handle error
+        }
+    } else {
+        printk("[E] BLELNClient - failed encrypting cert msg\n");
+    }
+}
+
+void BLELNClient::disconnect(int reason) {
+    if (instance->conn && instance->sub_keyex.value_handle)
+        bt_gatt_unsubscribe(instance->conn, &instance->sub_keyex);
+    if (instance->conn && instance->sub_data.value_handle)
+        bt_gatt_unsubscribe(instance->conn, &instance->sub_data);
+
+    instance->h_keyex_tx = 0;
+    instance->h_keyex_rx = 0;
+    instance->h_data_tx = 0;
+    instance->h_data_rx = 0;
+
+    if (instance->conn) {
+        bt_conn_disconnect(instance->conn, reason);
+        bt_conn_unref(instance->conn);
+        instance->conn = nullptr;
+    }
+}
+
+
 void
 BLELNClient::device_found_cb_new(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type, struct net_buf_simple *buf) {
-    if(g_client_singleton)
-        g_client_singleton->handle_adv(addr, buf);
+    if(instance)
+        instance->handle_adv(addr, buf);
 }
 
 void BLELNClient::handle_adv(const bt_addr_le_t *addr, struct net_buf_simple *ad) {
-    // sprawdź czy reklama zawiera nasz service UUID (128-bit)
     bool has_service = false;
     bt_data_parse(ad, [](struct bt_data *data, void *user_data){
         auto ctx = static_cast<std::pair<bool*, bt_uuid_128*>*>(user_data);
         if (data->type == BT_DATA_UUID128_ALL || data->type == BT_DATA_UUID128_SOME) {
-            // porównaj z uuid_service (LE)
             for (size_t off=0; off + 16 <= data->data_len; off += 16) {
                 if (memcmp(data->data + off, ctx->second->val, 16) == 0) {
                     *ctx->first = true;
@@ -229,84 +521,68 @@ void BLELNClient::handle_adv(const bt_addr_le_t *addr, struct net_buf_simple *ad
     }
 }
 
-// ===== Connect / Disconnect callbacks =====
-void BLELNClient::beginConnect(const bt_addr_le_t* addr, const std::function<void(bool, int)>& onConnectResult) {
-    onConRes = onConnectResult;
 
-    bt_conn_le_create_param create_param = {
-            .options = BT_CONN_LE_OPT_NONE,
-            .interval = BT_GAP_INIT_CONN_INT_MIN,
-            .window   = BT_GAP_SCAN_FAST_WINDOW,
-            .interval_coded = 0,
-            .window_coded   = 0,
-            .timeout = 0,
-    };
-    bt_le_conn_param conn_param = {
-            .interval_min = 24, .interval_max = 40, .latency = 0, .timeout = 400
-    };
-
-    int err = bt_conn_le_create(addr, &create_param, &conn_param, &conn);
-    if (err) {
-        if (onConRes) onConRes(false, err);
-        return;
-    }
-    // reszta pójdzie w connected_cb
-}
 
 void BLELNClient::connected_cb(struct bt_conn *c, uint8_t err) {
-    auto* self = self_from_conn(c);
-    if (!self) return;
+
+    if (!instance) return;
     if (err) {
-        if (self->onConRes) self->onConRes(false, err);
+        if (instance->onConRes) instance->onConRes(false, err);
         return;
     }
-    // trzymamy referencję
-    if (!self->conn) {
-        self->conn = bt_conn_ref(c);
+    if (!instance->conn) {
+        uint16_t connHandle;
+        bt_hci_get_conn_handle(c, &connHandle);
+        // TODO: Register c object secured with mutex
+        instance->conn = bt_conn_ref(c);
+        instance->appendActionToQueue(BLELN_WORKER_ACTION_REGISTER_CONNECTION, connHandle, nullptr, 0);
     }
-    if (self->onConRes) self->onConRes(true, 0);
+    if (instance->onConRes) instance->onConRes(true, 0);
 }
 
 void BLELNClient::disconnected_cb(struct bt_conn *c, uint8_t reason) {
-    auto* self = self_from_conn(c);
-    if (!self) return;
-    (void)reason;
-    // posprzątaj lekko (pełny cleanup w stop()/disconnect())
+
+    if (!instance) return;
+
+    uint16_t connHandle;
+    bt_hci_get_conn_handle(c, &connHandle);
+    instance->appendActionToQueue(BLELN_WORKER_ACTION_DELETE_CONNECTION, connHandle, nullptr, 0);
+    // TODO: unegister c object secured with mutex
 }
 
 void BLELNClient::auth_passkey_entry(struct bt_conn *conn) {
-    // wstrzykuj stały passkey 123456, jak w Twojej wersji
     bt_conn_auth_passkey_entry(conn, 123456);
 }
+
 void BLELNClient::auth_cancel(struct bt_conn *conn) {
     (void)conn;
 }
 
-// ===== Discovery =====
 uint8_t BLELNClient::discover_func(struct bt_conn *c, const struct bt_gatt_attr *attr, struct bt_gatt_discover_params *params) {
-    auto* self = g_client_singleton;
-    if (!self) return BT_GATT_ITER_STOP;
+    if (!instance) return BT_GATT_ITER_STOP;
     if (!attr) {
-        // koniec
-        self->disc_params.func = nullptr;
+        instance->disc_params.func = nullptr;
         return BT_GATT_ITER_STOP;
     }
 
     const struct bt_gatt_chrc *chrc;
     const struct bt_gatt_service_val *sval;
+
+    uint8_t ret;
     switch (params->type) {
         case BT_GATT_DISCOVER_PRIMARY:
-            // przejdź do characteristic
             sval = (const bt_gatt_service_val*)attr->user_data;
             if(bt_uuid_cmp((bt_uuid*)sval->uuid, &BLELNBase::CLIENT_SERVICE_UUID.uuid) == 0) {
-                self->disc_params.uuid = nullptr;
-                self->disc_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
-                self->disc_params.start_handle = attr->handle;
-                self->disc_params.end_handle = sval->end_handle;
-                bt_gatt_discover(c, &self->disc_params);
-                return BT_GATT_ITER_STOP;
+                instance->disc_params.uuid = nullptr;
+                instance->disc_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+                instance->disc_params.start_handle = attr->handle;
+                instance->disc_params.end_handle = sval->end_handle;
+                bt_gatt_discover(c, &instance->disc_params);
+                ret= BT_GATT_ITER_STOP;
+                break;
             } else {
-                return BT_GATT_ITER_CONTINUE;
+                ret= BT_GATT_ITER_CONTINUE;
+                break;
             }
 
         case BT_GATT_DISCOVER_CHARACTERISTIC:
@@ -314,19 +590,26 @@ uint8_t BLELNClient::discover_func(struct bt_conn *c, const struct bt_gatt_attr 
             char buf2[50];
             bt_uuid_to_str((bt_uuid*)chrc->uuid, buf2, 40);
             if (bt_uuid_cmp(((bt_uuid*)chrc->uuid), &BLELNBase::KEYEX_TX_UUID.uuid) == 0) {
-                self->h_keyex_tx = chrc->value_handle;
+                instance->h_keyex_tx = chrc->value_handle;
             } else if (bt_uuid_cmp(((bt_uuid*)chrc->uuid), &BLELNBase::KEYEX_RX_UUID.uuid) == 0) {
-                self->h_keyex_rx = chrc->value_handle;
+                instance->h_keyex_rx = chrc->value_handle;
             } else if (bt_uuid_cmp(((bt_uuid*)chrc->uuid), &BLELNBase::DATA_TX_UUID.uuid) == 0) {
-                self->h_data_tx = chrc->value_handle;
+                instance->h_data_tx = chrc->value_handle;
             } else if (bt_uuid_cmp(((bt_uuid*)chrc->uuid), &BLELNBase::DATA_RX_UUID.uuid) == 0) {
-                self->h_data_rx = chrc->value_handle;
+                instance->h_data_rx = chrc->value_handle;
             }
-            return BT_GATT_ITER_CONTINUE;
+            ret= BT_GATT_ITER_CONTINUE;
+            break;
 
         default:
-            return BT_GATT_ITER_CONTINUE;
+            ret= BT_GATT_ITER_CONTINUE;
     }
+
+    bool have_handles = instance->h_keyex_tx && instance->h_keyex_rx && instance->h_data_tx && instance->h_data_rx ;
+    if (!have_handles){
+        instance->appendActionToQueue(BLELN_WORKER_ACTION_SERVICE_DISCOVERED, 0, nullptr, 0);
+    }
+    return ret;
 }
 
 void BLELNClient::exchange_cb(struct bt_conn *conn, uint8_t err, struct bt_gatt_exchange_params *params){
@@ -343,7 +626,6 @@ bool BLELNClient::discover() {
     bt_gatt_exchange_params ex_params {.func= exchange_cb};
     bt_gatt_exchange_mtu(conn, &ex_params);
 
-    // 1) znajdź usługę
     memset(&disc_params, 0, sizeof(disc_params));
     disc_params.uuid = &BLELNBase::CLIENT_SERVICE_UUID.uuid;
     disc_params.func = discover_func;
@@ -357,319 +639,67 @@ bool BLELNClient::discover() {
         return false;
     }
 
-    // proste czekanie aż uchwyty się zapełnią (do 2s)
-    int tries = 200;
-    while (tries-- && (!h_keyex_tx || !h_keyex_rx || !h_data_tx || !h_data_rx )) {
-        k_sleep(K_MSEC(10));
-    }
-    have_handles = h_keyex_tx && h_keyex_rx && h_data_tx && h_data_rx ;
-    if (!have_handles){
-        printk("discover: -2\r\n");
-        return false;
-    }
-
-    memset(&sub_keyex, 0, sizeof(sub_keyex));
-    sub_keyex.ccc_handle = BT_GATT_AUTO_DISCOVER_CCC_HANDLE;
-    sub_keyex.value_handle = h_keyex_tx;
-    sub_keyex.notify = notify_keyex_cb;
-    sub_keyex.end_handle= h_data_tx;
-    sub_keyex.value = BT_GATT_CCC_NOTIFY;
-    sub_keyex.disc_params= &keyex_ccc_disc_params;
-    int r= bt_gatt_subscribe(conn, &sub_keyex);
-    printk("Subscribe key ex: %d\r\n", r);
-
-    memset(&sub_data, 0, sizeof(sub_data));
-    sub_data.ccc_handle = BT_GATT_AUTO_DISCOVER_CCC_HANDLE;
-    sub_data.value_handle = h_data_tx;
-    sub_data.notify = notify_data_cb;
-    sub_data.value = BT_GATT_CCC_NOTIFY;
-    sub_data.end_handle= 0xffff;
-    sub_data.disc_params= &data_ccc_disc_params;
-    r= bt_gatt_subscribe(conn, &sub_data);
-    printk("Subscribe data: %d\r\n", r);
-
     return true;
 }
 
-// ===== Notifications =====
 uint8_t BLELNClient::notify_keyex_cb(struct bt_conn *c,
                                      struct bt_gatt_subscribe_params *params,
                                      const void *data, uint16_t length) {
-    auto* self = g_client_singleton;
-    if (!self) return BT_GATT_ITER_CONTINUE;
+    if (!instance) return BT_GATT_ITER_CONTINUE;
     if (!data || length == 0) return BT_GATT_ITER_CONTINUE;
-    self->onKeyExNotify((const uint8_t*)data, length);
+    instance->onKeyExNotify((const uint8_t*)data, length);
     return BT_GATT_ITER_CONTINUE;
 }
 
 uint8_t BLELNClient::notify_data_cb(struct bt_conn *c,
                                     struct bt_gatt_subscribe_params *params,
                                     const void *data, uint16_t length) {
-    auto* self = g_client_singleton;
-    if (!self) return BT_GATT_ITER_CONTINUE;
+    if (!instance) return BT_GATT_ITER_CONTINUE;
     if (!data || length == 0) return BT_GATT_ITER_CONTINUE;
-    self->onServerResponseNotify((const uint8_t*)data, length);
+    instance->onDataNotify((const uint8_t *) data, length);
     return BT_GATT_ITER_CONTINUE;
 }
 
 void BLELNClient::onKeyExNotify(const uint8_t* pData, size_t length) {
-    g_keyexPayload.assign((const char*)pData, length);
-    g_keyexReady = true;
-}
-
-void BLELNClient::onServerResponseNotify(const uint8_t* pData, size_t length) {
     if (!pData || !length) return;
-    appendToQueue(pData, length);
+    appendActionToQueue(BLELN_WORKER_ACTION_PROCESS_KEY_RX, 0, pData, length);
 }
 
-// ===== Handshake (1:1 z Twoją logiką) =====
-bool BLELNClient::handshake() {
-    // Czekaj max 5s na KEYEX_TX notify
-    int64_t t0 = k_uptime_get();
-    while (!g_keyexReady && (k_uptime_get() - t0) < 5000) {
-        k_sleep(K_MSEC(10));
-    }
-    if (!g_keyexReady) {
-        disconnect();
-        printk("[HX] timeout waiting KEYEX_TX notify\r\n");
+void BLELNClient::onDataNotify(const uint8_t* pData, size_t length) {
+    if (!pData || !length) return;
+    appendActionToQueue(BLELN_WORKER_ACTION_PROCESS_DATA_RX, 0, pData, length);
+}
+
+bool BLELNClient::handshake(uint8_t *v, size_t vlen) {
+    if (vlen!=1+4+32+65+12 || (uint8_t)v[0]!=1) {
         return false;
     }
 
-    const std::string& v = g_keyexPayload;
-    if (v.size() != 1+4+32+65+12 || (uint8_t)v[0] != 1) {
-        printk("[HX] bad keyex len=%u\r\n", (unsigned)v.size());
-        return false;
-    }
-    memcpy(&s_epoch,   &v[1], 4);
-    memcpy(s_salt,     &v[1+4], 32);
-    memcpy(s_srvPub,   &v[1+4+32], 65);
-    memcpy(s_srvNonce, &v[1+4+32+65], 12);
+    uint32_t s_epoch = 0;
+    uint8_t  s_salt[32], s_srvPub[65], s_srvNonce[12];
 
-    mbedtls_ecp_group g; mbedtls_mpi d; mbedtls_ecp_point Q;
-    if (!BLELNBase::ecdh_gen(s_cliPub, g, d, Q)) {
-        printk("[HX] ecdh_gen fail\r\n");
-        return false;
-    }
-    BLELNBase::random_bytes(s_cliNonce, 12);
+    memcpy(&s_epoch,  &v[1], 4);
+    memcpy(s_salt,    &v[1+4], 32);
+    memcpy(s_srvPub,  &v[1+4+32], 65);
+    memcpy(s_srvNonce,&v[1+4+32+65], 12);
 
-    // TX do KeyEx RX: [ver=1][cliPub:65][cliNonce:12]
-    std::string tx; tx.push_back(1);
-    tx.append((const char*)s_cliPub,65);
-    tx.append((const char*)s_cliNonce,12);
+    connCtx->getSessionEnc()->makeMyKeys();
+
+    // [ver=1][cliPub:65][cliNonce:12]
+    std::string tx;
+    tx.push_back(1);
+    tx.append((const char*)connCtx->getSessionEnc()->getMyPub(),65);
+    tx.append((const char*)connCtx->getSessionEnc()->getMyNonce(),12);
 
     int err = bt_gatt_write_without_response(conn, h_keyex_rx, tx.data(), tx.size(), false);
     if (err) {
         printk("[HX] write fail err=%d\r\n", err);
-        mbedtls_ecp_point_free(&Q); mbedtls_mpi_free(&d); mbedtls_ecp_group_free(&g);
         return false;
     }
 
-    // ECDH shared
-    uint8_t ss[32];
-    if (!BLELNBase::ecdh_shared(g, d, s_srvPub, ss)) {
-        printk("[HX] shared fail\r\n");
-        mbedtls_ecp_point_free(&Q); mbedtls_mpi_free(&d); mbedtls_ecp_group_free(&g);
-        return false;
-    }
+    connCtx->getSessionEnc()->deriveFriendsKey(s_srvPub, s_srvNonce, s_salt, s_epoch);
 
-    // HKDF salt = salt || epoch(LE)
-    uint8_t salt[36];
-    memcpy(salt, s_salt, 32);
-    salt[32] = (uint8_t)(s_epoch & 0xFF);
-    salt[33] = (uint8_t)((s_epoch >> 8) & 0xFF);
-    salt[34] = (uint8_t)((s_epoch >> 16) & 0xFF);
-    salt[35] = (uint8_t)((s_epoch >> 24) & 0xFF);
-
-    const char infoHdr_s2c[] = "BLEv1|sessKey_s2c";
-    uint8_t info_s2c[sizeof(infoHdr_s2c)-1 + 65 + 65 + 12 + 12], *p_s2c = info_s2c;
-    memcpy(p_s2c, infoHdr_s2c, sizeof(infoHdr_s2c)-1); p_s2c += sizeof(infoHdr_s2c)-1;
-    memcpy(p_s2c, s_srvPub, 65); p_s2c += 65;
-    memcpy(p_s2c, s_cliPub, 65); p_s2c += 65;
-    memcpy(p_s2c, s_srvNonce, 12); p_s2c += 12;
-    memcpy(p_s2c, s_cliNonce, 12); p_s2c += 12;
-    BLELNBase::hkdf_sha256(salt, sizeof(salt), ss, sizeof(ss), info_s2c, (size_t)(p_s2c - info_s2c), s_sessKey_s2c, 32);
-
-    const char infoHdr_c2s[] = "BLEv1|sessKey_c2s";
-    uint8_t info_c2s[sizeof(infoHdr_c2s)-1 + 65 + 65 + 12 + 12], *p_c2s = info_c2s;
-    memcpy(p_c2s, infoHdr_c2s, sizeof(infoHdr_c2s)-1); p_c2s += sizeof(infoHdr_c2s)-1;
-    memcpy(p_c2s, s_srvPub, 65); p_c2s += 65;
-    memcpy(p_c2s, s_cliPub, 65); p_c2s += 65;
-    memcpy(p_c2s, s_srvNonce, 12); p_c2s += 12;
-    memcpy(p_c2s, s_cliNonce, 12); p_c2s += 12;
-    BLELNBase::hkdf_sha256(salt, sizeof(salt), ss, sizeof(ss), info_c2s, (size_t)(p_c2s - info_c2s), s_sessKey_c2s, 32);
-
-    uint8_t sidBuf[2];
-    const char sidInfo[] = "BLEv1|sid";
-    BLELNBase::hkdf_sha256(salt, sizeof(salt), ss, sizeof(ss),
-                           (const uint8_t*)sidInfo, sizeof(sidInfo)-1,
-                           sidBuf, sizeof(sidBuf));
-    s_sid = ((uint16_t)sidBuf[0] << 8) | sidBuf[1];
-
-    s_ctr_s2c = 0;
-    s_ctr_c2s = 0;
-
-    mbedtls_ecp_point_free(&Q); mbedtls_mpi_free(&d); mbedtls_ecp_group_free(&g);
-    rxWorkerPaused= false;
     return true;
-}
-
-// ===== Encrypt & send =====
-bool BLELNClient::sendEncrypted(const std::string& msg) {
-    if (!conn || !have_handles || s_sid == 0) return false;
-
-    const char aadhdr[] = "DATAv1";
-    uint8_t aad[sizeof(aadhdr)-1 + 2 + 4], *a = aad;
-    memcpy(a, aadhdr, sizeof(aadhdr)-1); a += sizeof(aadhdr)-1;
-    *a++ = (uint8_t)(s_sid >> 8);
-    *a++ = (uint8_t)(s_sid & 0xFF);
-    *a++ = (uint8_t)(s_epoch & 0xFF);
-    *a++ = (uint8_t)((s_epoch >> 8) & 0xFF);
-    *a++ = (uint8_t)((s_epoch >> 16) & 0xFF);
-    *a   = (uint8_t)((s_epoch >> 24) & 0xFF);
-
-    s_ctr_c2s++;
-    uint8_t nonce[12];
-    BLELNBase::random_bytes(nonce, 12);
-    std::string ct; uint8_t tag[16];
-
-    if (!BLELNBase::gcm_encrypt(s_sessKey_c2s, (const uint8_t*)msg.data(), msg.size(),
-                                nonce, aad, sizeof(aad), ct, tag)) {
-        printk("[GCM] fail\r\n");
-        return false;
-    }
-
-    std::string pkt;
-    pkt.resize(4);
-    pkt[0] = (uint8_t)((s_ctr_c2s >> 24) & 0xFF);
-    pkt[1] = (uint8_t)((s_ctr_c2s >> 16) & 0xFF);
-    pkt[2] = (uint8_t)((s_ctr_c2s >> 8) & 0xFF);
-    pkt[3] = (uint8_t)(s_ctr_c2s & 0xFF);
-    pkt.append((const char*)nonce, 12);
-    pkt.append(ct);
-    pkt.append((const char*)tag, 16);
-
-    // write without response
-    int err = bt_gatt_write_without_response(conn, h_data_rx, pkt.data(), pkt.size(), false);
-    return (err == 0);
-}
-
-// ===== RX Queue / worker =====
-void BLELNClient::appendToQueue(const uint8_t* pData, size_t length) {
-    auto* heapBuf = (uint8_t*)k_malloc(length);
-    if (!heapBuf) return;
-    memcpy(heapBuf, pData, length);
-    auto* pkt = (RxClientPacket*)k_malloc(sizeof(RxClientPacket));
-    if (!pkt) { k_free(heapBuf); return; }
-    pkt->len = length;
-    pkt->buf = heapBuf;
-    k_fifo_put(&rx_fifo, pkt);
-}
-
-void BLELNClient::rxWorker() {
-    while (runRxWorker) {
-        if(!rxWorkerPaused) {
-            auto *node = static_cast<RxClientPacket *>(k_fifo_get(&rx_fifo, K_MSEC(50)));
-            if (!node) continue;
-
-            if (s_sid != 0) {
-                if (node->len >= 4 + 12 + 16) {
-                    const uint8_t *ctrBE = node->buf;
-                    const uint8_t *nonce = node->buf + 4;
-                    const uint8_t *ct = node->buf + 4 + 12;
-                    size_t ctLen = node->len - (4 + 12 + 16);
-                    const uint8_t *tag = node->buf + (node->len - 16);
-
-                    uint32_t ctr = ((uint32_t) ctrBE[0] << 24) | ((uint32_t) ctrBE[1] << 16) |
-                                   ((uint32_t) ctrBE[2] << 8) | ((uint32_t) ctrBE[3]);
-
-                    if (ctr > s_ctr_s2c) {
-                        const char aadhdr[] = "DATAv1";
-                        uint8_t aad[sizeof(aadhdr) - 1 + 2 + 4], *a = aad;
-                        memcpy(a, aadhdr, sizeof(aadhdr) - 1);
-                        a += sizeof(aadhdr) - 1;
-                        *a++ = (uint8_t) (s_sid >> 8);
-                        *a++ = (uint8_t) (s_sid & 0xFF);
-                        *a++ = (uint8_t) (s_epoch & 0xFF);
-                        *a++ = (uint8_t) ((s_epoch >> 8) & 0xFF);
-                        *a++ = (uint8_t) ((s_epoch >> 16) & 0xFF);
-                        *a = (uint8_t) ((s_epoch >> 24) & 0xFF);
-
-                        psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
-                        psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
-                        psa_set_key_bits(&attr, 256);
-                        psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_DECRYPT);
-                        psa_set_key_algorithm(&attr, PSA_ALG_GCM);
-
-                        psa_key_id_t key_id = 0;
-                        psa_status_t st = psa_import_key(&attr, s_sessKey_s2c, 32, &key_id);
-                        if (st == PSA_SUCCESS) {
-                            // PSA oczekuje ct||tag w jednym buforze
-                            std::string ct_tag;
-                            ct_tag.assign((const char *) ct, ctLen);
-                            ct_tag.append((const char *) tag, 16);
-
-                            std::string plain;
-                            plain.resize(ctLen);
-                            size_t plain_len = 0;
-
-                            st = psa_aead_decrypt(key_id, PSA_ALG_GCM,
-                                                  nonce, 12,
-                                                  aad, sizeof(aad),
-                                                  reinterpret_cast<const uint8_t *>(ct_tag.data()), ct_tag.size(),
-                                                  reinterpret_cast<uint8_t *>(plain.data()), plain.size(),
-                                                  &plain_len);
-
-                            psa_destroy_key(key_id);
-
-                            if (st == PSA_SUCCESS) {
-                                plain.resize(plain_len);
-                                s_ctr_s2c = ctr;
-                                if (onMsgRx) onMsgRx(plain);
-                            }
-                        }
-                    }
-                }
-            }
-
-            k_free(node->buf);
-            k_free(node);
-        } else {
-            k_sleep(K_MSEC(100));
-        }
-    }
-}
-
-// ===== Disconnect (manual) =====
-void BLELNClient::disconnect() {
-    if (conn && sub_keyex.value_handle) bt_gatt_unsubscribe(conn, &sub_keyex);
-    if (conn && sub_data.value_handle)  bt_gatt_unsubscribe(conn, &sub_data);
-
-    have_handles = false;
-    h_keyex_tx = h_keyex_rx = h_data_tx = h_data_rx = 0;
-
-    if (conn) {
-        bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-        bt_conn_unref(conn);
-        conn = nullptr;
-    }
-
-    s_sid = 0;
-    s_ctr_s2c = 0;
-    s_ctr_c2s = 0;
-    memset(s_sessKey_s2c, 0, sizeof(s_sessKey_s2c));
-    memset(s_sessKey_c2s, 0, sizeof(s_sessKey_c2s));
-    memset(s_cliPub, 0, sizeof(s_cliPub));
-    memset(s_srvPub, 0, sizeof(s_srvPub));
-    memset(s_cliNonce, 0, sizeof(s_cliNonce));
-    memset(s_srvNonce, 0, sizeof(s_srvNonce));
-    memset(s_salt, 0, sizeof(s_salt));
-    s_epoch = 0;
-    g_keyexPayload.clear();
-    g_keyexReady = false;
-}
-
-bool BLELNClient::parseAdData(struct bt_data *data, void *user_data) {
-    return false;
 }
 
 

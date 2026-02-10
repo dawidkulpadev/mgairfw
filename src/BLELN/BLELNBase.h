@@ -1,5 +1,22 @@
-// BLELNBase.h — Zephyr (nRF52840)
-// 2025-10-18
+/**
+    MioGiapicco Light Firmware - Firmware for Light Device of MioGiapicco system
+    Copyright (C) 2026  Dawid Kulpa
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+    Please feel free to contact me at any time by email <dawidkulpadev@gmail.com>
+*/
 
 #ifndef MGLIGHTFW_G2_BLELNBASE_H
 #define MGLIGHTFW_G2_BLELNBASE_H
@@ -22,7 +39,39 @@
 #include <string>
 #include <cstring>
 
+#define BLELN_TEST_NONCE_LEN        48
+#define BLELN_DEV_PUB_KEY_LEN       64
+#define BLELN_DEV_PRIV_KEY_LEN      32
+#define BLELN_MANU_PUB_KEY_LEN      64
+#define BLELN_DEV_SIGN_LEN          64
+#define BLELN_MANU_SIGN_LEN         64
+#define BLELN_NONCE_SIGN_LEN        64
+
+#define BLELN_MSG_TITLE_CERT                                "$CERT"
+#define BLELN_MSG_TITLE_CHALLENGE_RESPONSE_NONCE            "$CHRN"
+#define BLELN_MSG_TITLE_CHALLENGE_RESPONSE_ANSW_AND_NONCE   "$CHRAN"
+#define BLELN_MSG_TITLE_CHALLENGE_RESPONSE_ANSW             "$CHRA"
+#define BLELN_MSG_TITLE_AUTH_OK                             "$AUOK"
+
 void hexDump(const char* label, const uint8_t* data, size_t len);
+
+enum blen_wroker_actions {
+    BLELN_WORKER_ACTION_REGISTER_CONNECTION,
+    BLELN_WORKER_ACTION_DELETE_CONNECTION,
+    BLELN_WORKER_ACTION_PROCESS_SUBSCRIPTION,
+    BLELN_WORKER_ACTION_PROCESS_DATA_RX,
+    BLELN_WORKER_ACTION_PROCESS_KEY_RX,
+    BLELN_WORKER_ACTION_SEND_MESSAGE,
+    BLELN_WORKER_ACTION_SERVICE_DISCOVERED
+};
+
+typedef struct  {
+    void *fifo_reserved;
+    uint16_t connH;
+    uint16_t type;
+    size_t dlen;
+    uint8_t *d;
+} __attribute__((__packed__)) BLELNWorkerAction;
 
 
 class BLELNBase {
@@ -39,48 +88,6 @@ public:
             BT_UUID_INIT_128(BT_UUID_128_ENCODE(0xb675ddff, 0x679e, 0x458d, 0x9960, 0x939d8bb03572));
     static constexpr struct bt_uuid_128 DATA_RX_UUID  =
             BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x566f9eb0, 0xa95e, 0x4c18, 0xbc45, 0x79bd396389af));
-
-    // RNG / DRBG
-    static bool rngInitialised;
-
-    // --- HKDF(SHA-256)
-    static void hkdf_sha256(const uint8_t* salt, size_t salt_len,
-                            const uint8_t* ikm,  size_t ikm_len,
-                            const uint8_t* info, size_t info_len,
-                            uint8_t* okm,        size_t okm_len);
-
-    static void random_bytes(uint8_t* out, size_t len);
-
-    // --- PSK storage (Zephyr Settings/NVS)
-    // przechowujemy klucze pod ścieżką "bleln/salt" i "bleln/epoch"
-    static int  settings_init_and_load();
-    static void load_or_init_psk(uint8_t* g_psk_salt, uint32_t* g_epoch);
-    static void rotate_psk(uint8_t* g_psk_salt, uint32_t* g_epoch);
-
-    // --- ECDH P-256
-    static bool ecdh_gen(uint8_t pub65[65], mbedtls_ecp_group& g, mbedtls_mpi& d, mbedtls_ecp_point& Q);
-    static bool ecdh_shared(const mbedtls_ecp_group& g, const mbedtls_mpi& d,
-                            const uint8_t pub65[65], uint8_t out[32]);
-
-    // --- AES-GCM
-    static bool gcm_encrypt(const uint8_t key[32],
-                            const uint8_t* plain, size_t plen,
-                            const uint8_t* nonce12,
-                            const uint8_t* aad, size_t aadLen,
-                            std::string& out, uint8_t tag[16]);
-
-private:
-    // Cache ładowanych ustawień przez Settings
-    static inline uint8_t  s_salt[32];
-    static inline uint32_t s_epoch   = 0;
-    static inline bool     s_loaded  = false;
-
-    // Settings handler (odbiera "bleln/salt" i "bleln/epoch" podczas settings_load())
-    static int settings_set_cb(const char* key, size_t len_rd, settings_read_cb read_cb, void* cb_arg);
-    static inline struct settings_handler s_settings_handler {
-            .name = "bleln",
-            .h_set = BLELNBase::settings_set_cb,
-    };
 };
 
 #endif // MGLIGHTFW_G2_BLELNBASE_H

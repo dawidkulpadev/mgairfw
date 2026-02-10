@@ -3,6 +3,8 @@
 #include "mgair_v3_partition.dtsi"
 #include "mgair_v3-pinctrl.dtsi"
 #include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/adc/nrf-adc.h>
 
 / {
 	model = "Nordic nRF52840 DK NRF52840";
@@ -15,6 +17,11 @@
 		zephyr,uart-mcumgr = &uart0;
 		zephyr,bt-mon-uart = &uart0;
 		zephyr,bt-c2h-uart = &uart0;
+	};
+
+	zephyr,user {
+		/* Mówimy: ten wirtualny użytkownik korzysta z kanału 0 w ADC */
+		io-channels = <&adc 0>;
 	};
 
 	leds {
@@ -36,6 +43,15 @@
 		};
 	};
 
+	my_inputs {
+		compatible = "gpio-keys";
+
+		pin_sensor: pin_sensor_0 {
+			gpios = <&gpio0 23 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+			label = "My Monitor Pin";
+		};
+	};
+
 	/* These aliases are provided for compatibility with samples */
 	aliases {
 		led0 = &led0;
@@ -43,6 +59,7 @@
 		mcuboot-button0 = &button0;
 		mcuboot-led0 = &led0;
 		watchdog0 = &wdt0;
+		my-input-pin = &pin_sensor;
 	};
 };
 
@@ -56,6 +73,18 @@
 
 &adc {
 	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+		zephyr,input-positive = <NRF_SAADC_AIN3>;
+
+		zephyr,resolution = <12>;
+	};
 };
 
 &uicr {

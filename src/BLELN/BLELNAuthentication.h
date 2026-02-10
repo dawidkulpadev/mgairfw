@@ -18,22 +18,28 @@
     Please feel free to contact me at any time by email <dawidkulpadev@gmail.com>
 */
 
-#ifndef SUPERVISOR_SUPERSTRING_H
-#define SUPERVISOR_SUPERSTRING_H
+#ifndef MGLIGHTFW_BLELNAUTHENTICATION_H
+#define MGLIGHTFW_BLELNAUTHENTICATION_H
 
+#include "mbedtls/base64.h"
+#include "BLELNBase.h"
+#include <zephyr/settings/settings.h>
 
-#include <vector>
-#include <string>
+#include "BLELNCert.h"
 
-typedef std::vector<std::string> StringList;
+class BLELNAuthentication {
+public:
+    void loadCert(BLELNCert *myCert);
+    std::string getSignedCert();
+    bool verifyCert(const std::string &cert, const std::string &sign, uint8_t *genOut, uint8_t *macOut,
+                    int macOutLen, uint8_t *pubKeyOut, int pubKeyOutLen);
+    void signData(const uint8_t *d, size_t dlen, uint8_t *out);
 
-StringList split(const std::string &s, char d);
-StringList splitCsvRespectingQuotes(const std::string& s, char delim=',');
-void removeLeading(std::string &s, const std::string &l);
-void removeLeading(std::string &s, char c);
-void removeTrailing(std::string &s, const std::string &l);
-void removeTrailing(std::string &s, char c);
+private:
+    uint8_t certSign[BLELN_MANU_SIGN_LEN];
+    uint8_t manuPubKey[BLELN_MANU_PUB_KEY_LEN];
+    uint8_t myPrivateKey[BLELN_DEV_PRIV_KEY_LEN];
+    uint8_t myPublicKey[BLELN_DEV_PUB_KEY_LEN];
+};
 
-
-
-#endif //SUPERVISOR_SUPERSTRING_H
+#endif //MGLIGHTFW_BLELNAUTHENTICATION_H
