@@ -39,7 +39,8 @@
 class BLELNClient {
 public:
     // User methods
-    static void init();
+    static void init(const uint8_t *certSign, const uint8_t *manuPubKey, const uint8_t *myPrivateKey,
+                     const uint8_t *myPublicKey, const std::string &userId);
     static void deinit();
 
     static void start(const std::string& name, std::function<void(const std::string&)> onServerResponse);
@@ -63,6 +64,8 @@ static void auth_passkey_entry(struct bt_conn *conn);
     static void disconnected_cb(struct bt_conn *conn, uint8_t reason);
 
 private:
+
+    BLELNClient(const uint8_t* certSign, const uint8_t* manuPubKey, const uint8_t* myPrivateKey, const uint8_t* myPublicKey, const std::string &userId);
     bool discover();
     bool handshake(uint8_t *v, size_t vlen);
     static void device_found_cb_new(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type, struct net_buf_simple *buf);

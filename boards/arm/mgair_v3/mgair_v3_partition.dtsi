@@ -34,17 +34,24 @@
 		};
 
 		/*
-		 * The flash starting at 0x000f8000 and ending at
-		 * 0x000fffff is reserved for use by the application.
-		 */
-
-		/*
-		 * Storage partition will be used by FCB/LittleFS/NVS
-		 * if enabled.
+		 * Storage partition: 16KB
+		 * Used by NVS (UID, Picklock)
+		 * Address: 0xF8000 - 0xFC000
 		 */
 		storage_partition: partition@f8000 {
 			label = "storage";
-			reg = <0x000f8000 0x00008000>;
+			reg = <0x000f8000 0x00004000>;
+		};
+
+		/*
+		 * Factory Data partition: 16KB
+		 * Used for RAW Read of Keys, Certs, MAC
+		 * Address: 0xFC000 - End of Flash
+		 */
+		factory_partition: partition@fc000 {
+			label = "factory-data";
+			reg = <0x000fc000 0x00004000>;
+			read-only; /* Zabezpieczenie przed przypadkowym zapisem przez aplikację */
 		};
 	};
 };

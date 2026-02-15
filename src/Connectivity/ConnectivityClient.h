@@ -22,7 +22,7 @@
 #define MGLIGHTFW_CONNECTIVITYCLIENT_H
 
 #include "zephyr/kernel.h"
-#include "BLELN/BLELNClient.h"
+#include "bleln/BLELNClient.h"
 #include "string"
 #include "config.h"
 #include "SuperString.h"
@@ -47,8 +47,7 @@ public:
     void startAPITalk(const std::string& apiPoint, char method, const std::string& data); // Talk with API about me
 private:
 
-    State state;                            // State in client mode
-    BLELNClient blelnClient;
+    State state;
 
     // Callbacks
     Connectivity::OnApiResponseCb oar; // On API Response callback

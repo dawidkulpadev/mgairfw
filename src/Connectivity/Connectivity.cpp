@@ -22,11 +22,11 @@
 #include "ConnectivityClient.h"
 #include "ConnectivityConfig.h"
 
-void Connectivity::start(uint8_t devMode, const OnApiResponseCb &onApiResponse, BLELNCert *myCert) {
+void Connectivity::start(uint8_t devMode, const OnApiResponseCb &onApiResponse) {
 
     if(devMode==DEVICE_MODE_CONFIG) {
         printk("Start config mode\r\n");
-        conConfig= new ConnectivityConfig(myCert);
+        conConfig= new ConnectivityConfig();
         conMode = ConnectivityMode::ConfigMode;
     } else {
         printk("Start client mode\r\n");

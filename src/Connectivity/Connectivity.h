@@ -21,8 +21,8 @@
 #ifndef MGLIGHTFW_G2_CONNECTIVITY_H
 #define MGLIGHTFW_G2_CONNECTIVITY_H
 
-#include "BLELN/BLELNClient.h"
-#include "BLELN/BLELNServer.h"
+#include "bleln/BLELNClient.h"
+#include "bleln/BLELNServer.h"
 #include "config.h"
 #include "SuperString.h"
 
@@ -35,7 +35,7 @@ public:
     typedef std::function<void(int, int, int, const std::string &)> OnApiResponseCb;
     typedef std::function<void(ConnectivityMode)> RequestModeChangeCb;
 
-    void start(uint8_t devMode, const OnApiResponseCb &onApiResponse, BLELNCert *myCert);
+    void start(uint8_t devMode, const OnApiResponseCb &onApiResponse);
     void loop();
 
 private:

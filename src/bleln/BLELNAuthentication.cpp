@@ -27,11 +27,21 @@
 #include "SuperString.h"
 #include <charconv>
 
-void BLELNAuthentication::loadCert(BLELNCert *myCert) {
-    memcpy(certSign, myCert->getCertSign(), BLELN_MANU_SIGN_LEN);
-    memcpy(manuPubKey, myCert->getManuPubKey(), BLELN_MANU_PUB_KEY_LEN);
-    memcpy(myPrivateKey, myCert->getMyPrivateKey() , BLELN_DEV_PRIV_KEY_LEN);
-    memcpy(myPublicKey, myCert->getMyPublicKey(), BLELN_DEV_PUB_KEY_LEN);
+BLELNAuthentication::BLELNAuthentication(const uint8_t *cs, const uint8_t *mpk, const uint8_t *dPrivK,
+                                         const uint8_t *dPublK, const std::string &userId) {
+    memcpy(certSign, cs, BLELN_MANU_SIGN_LEN);
+    memcpy(manuPubKey, mpk, BLELN_MANU_PUB_KEY_LEN);
+    memcpy(myPrivateKey, dPrivK, BLELN_DEV_PRIV_KEY_LEN);
+    memcpy(myPublicKey, dPublK, BLELN_DEV_PUB_KEY_LEN);
+    uidStr= userId;
+
+    printk("User id pre: %s\n", uidStr.c_str());
+    auto [userId_prt, userId_ec] = std::from_chars(uidStr.data(), uidStr.data() + uidStr.size(), uid);
+    if (userId_ec == std::errc::invalid_argument or userId_ec == std::errc::result_out_of_range) {
+        uid= -1;
+    }
+    printk("User id post: %s\n", uidStr.c_str());
+    printk("User id int: %d\n", uid);
 }
 
 std::string BLELNAuthentication::getSignedCert() {
@@ -45,13 +55,22 @@ std::string BLELNAuthentication::getSignedCert() {
     // ,
     // certSign - base64
 
+    printk("User id on: %s\n", uidStr.c_str());
+
     std::string out;
     bt_addr_le_t mac;
     size_t count = 1;
     bt_id_get(&mac, &count);
 
+    uint8_t mac_be[6];
+    for (int i = 0; i < 6; i++) {
+        mac_be[i] = mac.a.val[5 - i];
+    }
+
     out.append("2;");
-    out.append(Encryption::base64Encode(mac.a.val, 6));
+    out.append(uidStr);
+    out.append(";");
+    out.append(Encryption::base64Encode(mac_be, 6));
     out.append(";");
     out.append(Encryption::base64Encode(myPublicKey, BLELN_DEV_PUB_KEY_LEN));
     out.append(",");
@@ -62,7 +81,7 @@ std::string BLELNAuthentication::getSignedCert() {
 
 
 bool BLELNAuthentication::verifyCert(const std::string &cert, const std::string &sign, uint8_t *genOut, uint8_t *macOut,
-                                     int macOutLen, uint8_t *pubKeyOut, int pubKeyOutLen) {
+                                     int macOutLen, uint8_t *pubKeyOut, int pubKeyOutLen, int* userIdOut)  {
     uint8_t signRaw[BLELN_MANU_SIGN_LEN];
     Encryption::base64Decode(sign, signRaw, BLELN_MANU_SIGN_LEN);
 
@@ -77,13 +96,18 @@ bool BLELNAuthentication::verifyCert(const std::string &cert, const std::string 
         StringList certSplit= splitCsvRespectingQuotes(cert, ';');
 
 
-        auto [ptr, ec] = std::from_chars(certSplit[0].data(), certSplit[0].data() + certSplit[0].size(), *genOut);
-         if (ec == std::errc::invalid_argument or ec == std::errc::result_out_of_range) {
+        auto [gen_ptr, gen_ec] = std::from_chars(certSplit[0].data(), certSplit[0].data() + certSplit[0].size(), *genOut);
+        if (gen_ec == std::errc::invalid_argument or gen_ec == std::errc::result_out_of_range) {
              return false;
         }
 
-        if(Encryption::base64Decode(certSplit[1], macOut, macOutLen)==6){
-            if(Encryption::base64Decode(certSplit[2], pubKeyOut, pubKeyOutLen)!=BLELN_DEV_PUB_KEY_LEN){
+        auto [userId_prt, userId_ec] = std::from_chars(certSplit[1].data(), certSplit[1].data()+certSplit[1].size(), *userIdOut);
+        if (userId_ec == std::errc::invalid_argument or userId_ec == std::errc::result_out_of_range) {
+            return false;
+        }
+
+        if(Encryption::base64Decode(certSplit[2], macOut, macOutLen)==6){
+            if(Encryption::base64Decode(certSplit[3], pubKeyOut, pubKeyOutLen)!=BLELN_DEV_PUB_KEY_LEN){
                 return false;
             }
         } else {
@@ -99,3 +123,6 @@ void BLELNAuthentication::signData(const uint8_t *d, size_t dlen, uint8_t *out) 
                                     myPrivateKey, BLELN_DEV_PRIV_KEY_LEN, out, BLELN_DEV_SIGN_LEN);
 }
 
+int BLELNAuthentication::getMyUserId() const {
+    return uid;
+}

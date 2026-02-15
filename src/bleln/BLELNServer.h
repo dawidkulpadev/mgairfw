@@ -50,10 +50,10 @@
 class BLELNServer{
 public:
     // User methods
-    static void init();     // <- Run this first!!!
+    static void init(const uint8_t* certSign, const uint8_t* manuPubKey, const uint8_t* myPrivateKey, const uint8_t* myPublicKey, const std::string &userId);     // <- Run this first!!!
     static void deinit();
 
-    static void start(const char *name, const std::string &uuid, BLELNCert *myCert);
+    static void start(const char *name, const std::string &uuid);
     static void stop();
 
     static bool sendEncrypted(uint16_t h, const std::string& msg);
@@ -77,7 +77,7 @@ public:
     static void onKeyExTxSubscribe(const struct bt_gatt_attr *attr, uint16_t value);
 
 private:
-    BLELNServer(){}
+    BLELNServer(const uint8_t* certSign, const uint8_t* manuPubKey, const uint8_t* myPrivateKey, const uint8_t* myPublicKey, const std::string &userId);
 
     std::string advName;
 

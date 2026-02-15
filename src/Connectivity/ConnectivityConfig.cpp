@@ -19,11 +19,13 @@
 */
 
 #include "ConnectivityConfig.h"
+#include "DeviceConfig.h"
 
-ConnectivityConfig::ConnectivityConfig(BLELNCert *myCert) {
-    BLELNServer::init();
+ConnectivityConfig::ConnectivityConfig() {
+    BLELNServer::init(devicesConfig.getCertSign(), devicesConfig.getManuPubKey(),
+                      devicesConfig.getMyPrivateKey(), devicesConfig.getMyPublicKey(),
+                      devicesConfig.getUid());
     state= ConfigModeState::Start;
-    cert= myCert;
 
     // Read mac address
     bt_addr_le_t buf;
@@ -37,7 +39,7 @@ void ConnectivityConfig::loop() {
     if(state==ConfigModeState::Start){
         printk("Connectivity (Config): Start\r\n");
 
-        BLELNServer::start(BLE_NAME, BLELN_CONFIG_UUID, cert);
+        BLELNServer::start(BLE_NAME, BLELN_CONFIG_UUID);
         BLELNServer::setOnMessageReceivedCallback([this](uint16_t cliH, const std::string &msg){
             StringList parts= splitCsvRespectingQuotes(msg);
             if(parts[0]=="$CONFIG"){
@@ -47,26 +49,30 @@ void ConnectivityConfig::loop() {
                     if(parts[2]=="wssid"){
                         sprintf(resp, "$CONFIG,VAL,wssid,");
                     } else if(parts[2]=="pcklk"){
-                        /*if(this->config->getPicklock()!= nullptr)
-                            sprintf(resp, "$CONFIG,VAL,pcklk,%s",this->config->getPicklock());
-                        else
-                            sprintf(resp, "$CONFIG,VAL,pcklk,");*/
                         sprintf(resp, "$CONFIG,VAL,pcklk,");
                     } else if(parts[2]=="tzone"){
                         sprintf(resp, "$CONFIG,VAL,tzone,");
-                    } else if(parts[2]=="mac"){
-                        char str_mac[14];
-                        uint8_t *macc= this->getMAC();
-                        sprintf(str_mac, "%02X%02X%02X%02X%02X%02X", macc[0], macc[1], macc[2], macc[3], macc[4], macc[5]);
-                        sprintf(resp, "$CONFIG,VAL,mac,%s", str_mac);
+                    } else if(parts[2]=="role"){
+                        sprintf(resp, "$CONFIG,VAL,role,0");
                     }
                 } else if(parts[1]=="SET"){
-                    if(parts[2]=="pcklk"){
+                    if(parts[2]=="wssid"){
+                        sprintf(resp,"$CONFIG,SETOK,wssid");
+                    } else if(parts[2]=="wpsk"){
+                        sprintf(resp,"$CONFIG,SETOK,wpsk");
+                    } else if(parts[2]=="pcklk"){
                         sprintf(resp,"$CONFIG,SETOK,pcklk");
-                        //this->config->setPicklock(parts[3].c_str());
+                        devicesConfig.setPicklock(parts[3]);
+                    } else if(parts[2]=="tzone"){
+                        sprintf(resp,"$CONFIG,SETOK,tzone");
                     } else if(parts[2]=="uid"){
                         sprintf(resp,"$CONFIG,SETOK,uid");
-                        //this->config->setUid(parts[3].c_str());
+                        devicesConfig.setUid(parts[3]);
+                    } else if(parts[2]=="role"){
+                        sprintf(resp,"$CONFIG,SETOK,role");
+                    } else if(parts[2]=="certsign"){
+                        sprintf(resp,"$CONFIG,SETOK,certsign");
+                        devicesConfig.setCertSignFromBase64(parts[3]);
                     }
                 }
 
@@ -83,6 +89,8 @@ void ConnectivityConfig::loop() {
     } else if(state==ConfigModeState::ServerTasking){
         if(rebootCalled){
             if(rebootCalledAt + 2000 < k_uptime_get()){
+                devicesConfig.writeIdConfig();
+                k_sleep(K_MSEC(500));
                 sys_reboot(SYS_REBOOT_COLD);
             }
         }

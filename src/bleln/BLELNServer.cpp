@@ -28,8 +28,13 @@ K_THREAD_STACK_DEFINE(g_server_rx_stack, 2272)
 
 static BLELNServer* instance = nullptr;
 
-void BLELNServer::init() {
-    instance= new BLELNServer();
+BLELNServer::BLELNServer(const uint8_t *certSign, const uint8_t *manuPubKey, const uint8_t *myPrivateKey,
+                         const uint8_t *myPublicKey, const std::string &userId) :
+        authStore(certSign, manuPubKey, myPrivateKey, myPublicKey, userId){\
+}
+
+void BLELNServer::init(const uint8_t* certSign, const uint8_t* manuPubKey, const uint8_t* myPrivateKey, const uint8_t* myPublicKey, const std::string &userId) {
+    instance= new BLELNServer(certSign, manuPubKey, myPrivateKey, myPublicKey, userId);
     Encryption::randomizer_init();
 }
 
@@ -99,14 +104,12 @@ int BLELNServer::startAdvertising(const char *name)
 }
 
 
-void BLELNServer::start(const char *name, const std::string &uuid, BLELNCert *myCert) {
+void BLELNServer::start(const char *name, const std::string &uuid) {
     if(instance == nullptr)
-        BLELNServer::init();
+        return;
 
     instance->advName = std::string(name);
     instance->serviceUUID = uuid;
-
-    instance->authStore.loadCert(myCert);
 
     if (!callbacksRegistered) {
         bt_conn_cb_register(&s_conn_cb);
@@ -349,11 +352,18 @@ void BLELNServer::worker_processKeyRx(uint16_t h, uint8_t *data, size_t dataLen)
                     uint8_t gen;
                     uint8_t fMac[6];
                     uint8_t fPubKey[BLELN_DEV_PUB_KEY_LEN];
+                    int userId;
 
-                    if (authStore.verifyCert(parts[1], parts[2], &gen, fMac, 6, fPubKey, 64)) {
-                        cx->setCertData(fMac, fPubKey);
-                        sendChallengeNonce(cx);
-                        cx->setState(BLELNConnCtx::State::ChallengeResponseCli);
+                    if (authStore.verifyCert(parts[1], parts[2], &gen, fMac, 6, fPubKey, 64, &userId)) {
+                        if(userId==authStore.getMyUserId() or authStore.getMyUserId() ==-1) {
+                            cx->setCertData(fMac, fPubKey);
+                            sendChallengeNonce(cx);
+                            cx->setState(BLELNConnCtx::State::ChallengeResponseCli);
+                        } else {
+                            disconnectClient(cx, BT_HCI_ERR_INSUFFICIENT_SECURITY);
+                            cx->setState(BLELNConnCtx::State::AuthFailed);
+                            printk("[W] BLELNServer - not my users client\n");
+                        }
                     } else {
                         disconnectClient(cx, BT_HCI_ERR_AUTH_FAIL);
                         cx->setState(BLELNConnCtx::State::AuthFailed);
@@ -677,3 +687,4 @@ void BLELNServer::disconnected_cb(struct bt_conn *conn, uint8_t reason) {
 
     startAdvertising(instance->advName.c_str());
 }
+

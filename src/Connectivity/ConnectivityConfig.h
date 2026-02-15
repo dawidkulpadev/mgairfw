@@ -21,22 +21,22 @@
 #ifndef MGLIGHTFW_CONNECTIVITYCONFIG_H
 #define MGLIGHTFW_CONNECTIVITYCONFIG_H
 
-#include "BLELN/BLELNServer.h"
+#include "bleln/BLELNServer.h"
 #include "SuperString.h"
 #include <nrfx.h>
 #include <hal/nrf_ficr.h>
 #include "config.h"
 #include <zephyr/sys/reboot.h>
+#include <zephyr/kernel.h>
 
 class ConnectivityConfig {
 public:
     enum class ConfigModeState {Start, ServerTasking};
 
-    explicit ConnectivityConfig(BLELNCert *myCert);//, Preferences *preferences, DeviceConfig* deviceConfig);
+    explicit ConnectivityConfig();//, Preferences *preferences, DeviceConfig* deviceConfig);
     void loop();
     uint8_t* getMAC();
 private:
-    BLELNCert *cert;
     ConfigModeState state;                           // State in config mode
 
     uint8_t mac[6]{};
