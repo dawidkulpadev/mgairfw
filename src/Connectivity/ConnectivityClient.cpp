@@ -19,13 +19,14 @@
 */
 
 #include "ConnectivityClient.h"
-
+#include "DeviceConfig.h"
 #include <utility>
 
-ConnectivityClient::ConnectivityClient(Connectivity::OnApiResponseCb onApiResponse,
-                                       Connectivity::RequestModeChangeCb requestModeChange) {
+ConnectivityClient::ConnectivityClient(Connectivity::OnApiResponseCb onApiResponse) {
+    BLELNClient::init(devicesConfig.getCertSign(), devicesConfig.getManuPubKey(),
+                      devicesConfig.getMyPrivateKey(), devicesConfig.getMyPublicKey(),
+                      devicesConfig.getUid());
     oar= std::move(onApiResponse);
-    rmc= std::move(requestModeChange);
     state= State::Init;
     connectedFor= ConnectedFor::None;
     meApiTalkRequested= false;
@@ -33,7 +34,7 @@ ConnectivityClient::ConnectivityClient(Connectivity::OnApiResponseCb onApiRespon
 
 
 void ConnectivityClient::loop() {
-
+    k_sleep(K_SECONDS(60));
 }
 
 
@@ -46,10 +47,18 @@ void ConnectivityClient::finish() {
 
 }
 
-void ConnectivityClient::switchToServer() {
-}
-
 
 void ConnectivityClient::startAPITalk(const std::string& apiPoint, char method, const std::string& data) {
+
+}
+
+void ConnectivityClient::startServerSearch(uint32_t maxDurationMs) {
+    BLELNClient::startServerSearch(maxDurationMs, BLELN_HTTP_REQUESTER_UUID,
+                                   [this](const bt_addr_le_t* addr){
+        this->onServerFound(addr);
+    });
+}
+
+void ConnectivityClient::onServerFound(const bt_addr_le_t *addr) {
 
 }

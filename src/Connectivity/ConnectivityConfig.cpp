@@ -22,9 +22,9 @@
 #include "DeviceConfig.h"
 
 ConnectivityConfig::ConnectivityConfig() {
-    BLELNServer::init(devicesConfig.getCertSign(), devicesConfig.getManuPubKey(),
-                      devicesConfig.getMyPrivateKey(), devicesConfig.getMyPublicKey(),
-                      devicesConfig.getUid());
+        BLELNServer::init(devicesConfig.getCertSign(), devicesConfig.getManuPubKey(),
+                          devicesConfig.getMyPrivateKey(), devicesConfig.getMyPublicKey(),
+                          devicesConfig.getUid());
     state= ConfigModeState::Start;
 
     // Read mac address

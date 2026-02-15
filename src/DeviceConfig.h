@@ -30,6 +30,7 @@
 #define DEVICECONFIG_KEY_UID        "uid"
 #define DEVICECONFIG_KEY_PICKLOCK   "picklock"
 #define DEVICECONFIG_KEY_CERTSIGN   "certsign"
+#define DEVICECONFIG_KEY_LAST_SERVER_MAC    "lsm"
 
 
 #define FACTORY_DATA_ADDR 0xFC000
@@ -38,6 +39,14 @@ class DeviceConfig {
 public:
     static int id_settings_set(const char *name, size_t len,
                                settings_read_cb read_cb, void *cb_arg);
+    static int base_settings_set(const char *name, size_t len,
+                                 settings_read_cb read_cd, void *cb_arg);
+
+    DeviceConfig();
+
+    // base
+    std::string getLastServerMAC();
+    void setLastServerMAC(std::string mac);
 
     // id
     std::string getUid() const;
@@ -53,8 +62,11 @@ public:
     const uint8_t* getMyPrivateKey() const;
     const uint8_t* getMyPublicKey() const;
 
-    bool registerConfig();
+
+    static bool registerConfig();
     int processIdConfigRead(const char *name, size_t len,
+                            settings_read_cb read_cb, void *cb_arg);
+    int processBaseConfigRead(const char *name, size_t len,
                             settings_read_cb read_cb, void *cb_arg);
 
     void writeIdConfig();
@@ -67,6 +79,7 @@ public:
 private:
 
     // id
+    std::string lastServerMAC;
     std::string uid;
     std::string picklock;
     uint8_t certSign[BLELN_MANU_SIGN_LEN]{};

@@ -28,15 +28,9 @@
 #include "SuperString.h"
 #include "Connectivity.h"
 
-#define CLIENT_SERVER_CHECK_INTERVAL        ((5*60)*1000ul)       // 5 min
-#define CLIENT_TIME_SYNC_INTERVAL           ((600)*1000ul)        // 10 min
-#define WIFI_NTP_MAX_RETIRES                1
-#define BLE_REASON_MAX_CLIENTS              1 // TODO: Replace with real value
-
 class ConnectivityClient {
 public:
-    ConnectivityClient(Connectivity::OnApiResponseCb onApiResponse,
-                       Connectivity::RequestModeChangeCb requestModeChange);
+    ConnectivityClient(Connectivity::OnApiResponseCb onApiResponse);
 
     enum class State {Init, Idle, ServerSearching, ServerChecking, ServerConnecting, ServerConnected,
         ServerNotFound, ServerConnectFailed, WaitingForHTTPResponse, HTTPResponseReceived, WiFiChecking, WiFiConnected, WiFiConnectFailed};
@@ -44,6 +38,7 @@ public:
 
 
     void loop();
+    void startServerSearch(uint32_t maxDurationMs);
     void startAPITalk(const std::string& apiPoint, char method, const std::string& data); // Talk with API about me
 private:
 
@@ -51,11 +46,10 @@ private:
 
     // Callbacks
     Connectivity::OnApiResponseCb oar; // On API Response callback
-    Connectivity::RequestModeChangeCb rmc;
 
     void onServerResponse(const std::string &msg);
+    void onServerFound(const bt_addr_le_t* addr);
     void finish();
-    void switchToServer();
     // Client mode variables
     unsigned long lastServerCheck=0;
     unsigned long lastTimeSync=0;

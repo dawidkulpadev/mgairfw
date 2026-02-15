@@ -30,10 +30,7 @@ void Connectivity::start(uint8_t devMode, const OnApiResponseCb &onApiResponse) 
         conMode = ConnectivityMode::ConfigMode;
     } else {
         printk("Start client mode\r\n");
-        conClient= new ConnectivityClient(onApiResponse,
-                                          [this](ConnectivityMode m){
-            this->conMode= m;
-        });
+        conClient= new ConnectivityClient(onApiResponse);
         conMode = ConnectivityMode::ClientMode;
     }
 }

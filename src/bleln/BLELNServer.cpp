@@ -639,7 +639,7 @@ void BLELNServer::stop() {
 
     void* pending;
     while ((pending = k_fifo_get(&instance->rx_fifo, K_NO_WAIT)) != nullptr) {
-        BLELNWorkerAction* action = static_cast<BLELNWorkerAction*>(pending);
+        auto* action = static_cast<BLELNWorkerAction*>(pending);
         if(action->d) k_free(action->d);
         k_free(action);
     }

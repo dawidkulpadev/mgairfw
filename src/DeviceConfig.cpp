@@ -19,6 +19,7 @@
 */
 
 #include <zephyr/drivers/flash.h>
+#include <algorithm>
 #include "DeviceConfig.h"
 #include "bleln/Encryption.h"
 
@@ -28,6 +29,11 @@ DeviceConfig devicesConfig;
 static struct settings_handler id_conf = {
         .name= DEVICECONFIG_NAMESPACE_ID,
         .h_set= DeviceConfig::id_settings_set
+};
+
+static struct settings_handler base_conf = {
+        .name= DEVICECONFIG_NAMESPACE_BASE,
+        .h_set= DeviceConfig::base_settings_set
 };
 
 
@@ -41,6 +47,12 @@ struct __attribute__((packed)) factory_data_t {
     uint8_t  signature[64];
 };
 
+DeviceConfig::DeviceConfig() {
+    memset(certSign, 0, BLELN_MANU_SIGN_LEN);
+    picklock= "";
+    uid="-1";
+    lastServerMAC="";
+}
 
 std::string DeviceConfig::getUid() const {
     return uid;
@@ -82,7 +94,7 @@ void DeviceConfig::loadFactoryData() {
     if (factoryDataLoaded) return;
 
     const struct device *flash_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_flash_controller));
-    struct factory_data_t data;
+    struct factory_data_t data{};
 
     if (!device_is_ready(flash_dev)) {
         printk("[Factory] Flash device not ready\n");
@@ -101,13 +113,21 @@ void DeviceConfig::loadFactoryData() {
     memcpy(myPublicKey, data.dev_pub, BLELN_DEV_PUB_KEY_LEN);
     memcpy(factoryCertSign, data.signature, BLELN_MANU_SIGN_LEN);
 
+    bool certIsZero= std::all_of(std::begin(certSign), std::end(certSign), [](int i){
+        return i==0;
+    });
+
+    if(certIsZero){
+        memcpy(certSign, factoryCertSign, BLELN_MANU_SIGN_LEN);
+    }
+
     factoryDataLoaded = true;
     printk("[Factory] Keys loaded successfully from Flash.\n");
 }
 
 bool DeviceConfig::registerConfig() {
-    uid="-1";
     settings_register(&id_conf);
+    settings_register(&base_conf);
 
     return true;
 }
@@ -131,8 +151,11 @@ void DeviceConfig::factoryReset() {
 
 int DeviceConfig::id_settings_set(const char *name, size_t len,
                                   settings_read_cb read_cb, void *cb_arg){
-    printk("%s\n", name);
     return devicesConfig.processIdConfigRead(name, len, read_cb, cb_arg);
+}
+
+int DeviceConfig::base_settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
+    return devicesConfig.processBaseConfigRead(name, len, read_cb, cb_arg);
 }
 
 int DeviceConfig::processIdConfigRead(const char *name, size_t len,
@@ -173,3 +196,35 @@ int DeviceConfig::processIdConfigRead(const char *name, size_t len,
 
     return -ENOENT;
 }
+
+int DeviceConfig::processBaseConfigRead(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
+    const char *next;
+    int rc;
+
+    if (settings_name_steq(name, DEVICECONFIG_KEY_LAST_SERVER_MAC, &next) && !next) {
+        char buf[32];
+        rc = read_cb(cb_arg, buf, len);
+        if (rc > 0) {
+            lastServerMAC= buf;
+            return 0;
+        }
+
+        lastServerMAC= "";
+        return rc;
+    }
+
+
+    return -ENOENT;
+}
+
+std::string DeviceConfig::getLastServerMAC() {
+    return lastServerMAC;
+}
+
+void DeviceConfig::setLastServerMAC(std::string mac) {
+    lastServerMAC= std::move(mac);
+}
+
+
+
+

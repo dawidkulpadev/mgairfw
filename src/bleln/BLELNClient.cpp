@@ -29,11 +29,6 @@ K_THREAD_STACK_DEFINE(g_client_rx_stack, 2272);
 
 static BLELNClient* instance = nullptr;
 
-static const struct bt_conn_auth_cb s_auth_cb = {
-        .passkey_entry = BLELNClient::auth_passkey_entry,
-        .cancel        = BLELNClient::auth_cancel,
-};
-
 static struct bt_conn_cb s_conn_cb = {
         .connected    = BLELNClient::connected_cb,
         .disconnected = BLELNClient::disconnected_cb,
@@ -113,11 +108,10 @@ void BLELNClient::deinit() {
 
 
 void BLELNClient::start(const std::string& name, std::function<void(const std::string&)> onServerResponse) {
-    if(instance == nullptr)
-        return;
+    if(instance == nullptr) return;
+    if (instance->runWorker) return;
 
     bt_conn_cb_register(&s_conn_cb);
-    bt_conn_auth_cb_register(&s_auth_cb);
 
     bt_le_oob oob{};
     bt_set_name(name.c_str());
@@ -134,7 +128,39 @@ void BLELNClient::start(const std::string& name, std::function<void(const std::s
 }
 
 void BLELNClient::stop() {
+    if (!instance) return;
+    if (!instance->runWorker) return; // Już zatrzymany
 
+    printk("[D] BLELNClient stopping...\n");
+
+    if (instance->scanning) {
+        bt_le_scan_stop();
+        instance->scanning = false;
+        if (instance->onScanResult) instance->onScanResult(nullptr);
+    }
+
+    if (instance->conn) {
+        if (instance->sub_keyex.value_handle)
+            bt_gatt_unsubscribe(instance->conn, &instance->sub_keyex);
+        if (instance->sub_data.value_handle)
+            bt_gatt_unsubscribe(instance->conn, &instance->sub_data);
+
+        bt_conn_disconnect(instance->conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+
+        bt_conn_unref(instance->conn);
+        instance->conn = nullptr;
+    }
+
+
+    instance->worker_deleteConnection();
+    instance->runWorker = false;
+    k_thread_abort(&instance->rx_thread);
+
+    instance->clearWorkerQueue();
+
+    bt_conn_cb_unregister(&s_conn_cb);
+
+    printk("[D] BLELNClient - stopped. System ready for sleep.\n");
 }
 
 void BLELNClient::startServerSearch(uint32_t durationMs,
@@ -149,9 +175,6 @@ void BLELNClient::startServerSearch(uint32_t durationMs,
             .interval   = 0x0060, // 60 * 0.625ms = 37.5ms
             .window     = 0x0030, // 30 * 0.625ms = 18.75ms
     };
-
-    int u=0;
-    int i=0;
 
     int err = bt_le_scan_start(&params, BLELNClient::device_found_cb_new);
     if (err) {
@@ -230,7 +253,7 @@ void BLELNClient::appendActionToQueue(uint8_t type, uint16_t conH, const uint8_t
 
 void BLELNClient::worker() {
     while(runWorker){
-        auto *action = static_cast<BLELNWorkerAction *>(k_fifo_get(&workerActionQueue, K_MSEC(1)));
+        auto *action = static_cast<BLELNWorkerAction *>(k_fifo_get(&workerActionQueue, K_SECONDS(1)));
 
         if(action) {
             if (action->type == BLELN_WORKER_ACTION_REGISTER_CONNECTION) {
@@ -281,12 +304,7 @@ void BLELNClient::worker() {
             lastWaterMarkPrint= k_uptime_get();
         }
 
-        // Pause task
-        if(k_fifo_is_empty(&workerActionQueue)){
-            k_sleep(K_MSEC(100));
-        } else {
-            k_sleep(K_MSEC(5));
-        }
+        k_sleep(K_MSEC(1));
     }
 }
 
@@ -508,6 +526,8 @@ BLELNClient::device_found_cb_new(const bt_addr_le_t *addr, int8_t rssi, uint8_t 
 
 void BLELNClient::handle_adv(const bt_addr_le_t *addr, struct net_buf_simple *ad) {
     bool has_service = false;
+
+    std::pair<bool*, bt_uuid_128*> ctx = { &has_service, (bt_uuid_128*)&BLELNBase::CLIENT_SERVICE_UUID };
     bt_data_parse(ad, [](struct bt_data *data, void *user_data){
         auto ctx = static_cast<std::pair<bool*, bt_uuid_128*>*>(user_data);
         if (data->type == BT_DATA_UUID128_ALL || data->type == BT_DATA_UUID128_SOME) {
@@ -519,7 +539,7 @@ void BLELNClient::handle_adv(const bt_addr_le_t *addr, struct net_buf_simple *ad
             }
         }
         return true;
-    }, (void*)new std::pair<bool*, bt_uuid_128*>{ &has_service, (bt_uuid_128*)&BLELNBase::CLIENT_SERVICE_UUID});
+    }, &ctx);
 
     if (has_service) {
         bt_le_scan_stop();
@@ -531,17 +551,14 @@ void BLELNClient::handle_adv(const bt_addr_le_t *addr, struct net_buf_simple *ad
 
 
 void BLELNClient::connected_cb(struct bt_conn *c, uint8_t err) {
-
     if (!instance) return;
     if (err) {
         if (instance->onConRes) instance->onConRes(false, err);
         return;
     }
-    if (!instance->conn) {
+    if (instance->conn) {
         uint16_t connHandle;
         bt_hci_get_conn_handle(c, &connHandle);
-        // TODO: Register c object secured with mutex
-        instance->conn = bt_conn_ref(c);
         instance->appendActionToQueue(BLELN_WORKER_ACTION_REGISTER_CONNECTION, connHandle, nullptr, 0);
     }
     if (instance->onConRes) instance->onConRes(true, 0);
@@ -613,8 +630,9 @@ uint8_t BLELNClient::discover_func(struct bt_conn *c, const struct bt_gatt_attr 
     }
 
     bool have_handles = instance->h_keyex_tx && instance->h_keyex_rx && instance->h_data_tx && instance->h_data_rx ;
-    if (!have_handles){
+    if (have_handles){
         instance->appendActionToQueue(BLELN_WORKER_ACTION_SERVICE_DISCOVERED, 0, nullptr, 0);
+        return BT_GATT_ITER_STOP;
     }
     return ret;
 }
@@ -707,6 +725,17 @@ bool BLELNClient::handshake(uint8_t *v, size_t vlen) {
     connCtx->getSessionEnc()->deriveFriendsKey(s_srvPub, s_srvNonce, s_salt, s_epoch);
 
     return true;
+}
+
+void BLELNClient::clearWorkerQueue() {
+    void* data;
+    while ((data = k_fifo_get(&workerActionQueue, K_NO_WAIT))) {
+        auto* action = static_cast<BLELNWorkerAction*>(data);
+        if (action->d) {
+            k_free(action->d);
+        }
+        k_free(action);
+    }
 }
 
 

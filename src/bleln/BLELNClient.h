@@ -96,6 +96,8 @@ private:
     void sendCertToServer(BLELNConnCtx *cx);
     void sendChallengeNonceSign(BLELNConnCtx *cx, const std::string &nonceB64);
 
+    void clearWorkerQueue();
+
     int64_t lastWaterMarkPrint;
     BLELNConnCtx *connCtx= nullptr;
     BLELNAuthentication authStore;
@@ -129,7 +131,6 @@ private:
 
     // Narzędzia
     static bool parse_uuid128(const std::string& s, bt_uuid_128* out);
-    static BLELNClient* self_from_conn(struct bt_conn* c);
 };
 
 #endif // MGLIGHTFW_G2_BLELNCLIENT_H
