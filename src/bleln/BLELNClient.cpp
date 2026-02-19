@@ -24,7 +24,7 @@
 #include "SuperString.h"
 #include <cstring>
 
-K_THREAD_STACK_DEFINE(g_client_rx_stack, 2272);
+K_THREAD_STACK_DEFINE(g_client_rx_stack, 2272)
 
 
 static BLELNClient* instance = nullptr;
@@ -34,65 +34,11 @@ static struct bt_conn_cb s_conn_cb = {
         .disconnected = BLELNClient::disconnected_cb,
 };
 
-struct AdvMatchCtx {
-    bool* has;
-    const bt_uuid_128* uuid;
-};
-
-extern "C" bool adv_parse_uuid128_cb(struct bt_data* data, void* user_data) {
-    auto* c = static_cast<AdvMatchCtx*>(user_data);
-    if (!c || !c->has || !c->uuid) return true;
-
-    if (data->type != BT_DATA_UUID128_ALL && data->type != BT_DATA_UUID128_SOME) {
-        return true;
-    }
-
-    const uint8_t* p = static_cast<const uint8_t*>(data->data);
-    size_t len = data->data_len;
-    while (len >= 16) {
-        if (memcmp(p, c->uuid->val, 16) == 0) {
-            *(c->has) = true;
-            return false;
-        }
-        p += 16;
-        len -= 16;
-    }
-    return true;
-}
-
-// ===== Utils =====
-bool BLELNClient::parse_uuid128(const std::string& s, bt_uuid_128* out) {
-    if (s.size() != 36) return false;
-    uint8_t bytes[16]{};
-    auto hex = [](char c)->int{
-        if (c>='0'&&c<='9') return c-'0';
-        if (c>='a'&&c<='f') return 10+(c-'a');
-        if (c>='A'&&c<='F') return 10+(c-'A');
-        return -1;
-    };
-    const int map[16][2] = {
-            {0,1},{2,3},{4,5},{6,7},     // time_low
-            {9,10},{11,12},              // time_mid
-            {14,15},{16,17},             // time_hi
-            {19,20},{21,22},             // clock_seq
-            {24,25},{26,27},{28,29},{30,31},{32,33},{34,35} // node
-    };
-    for (int i=0;i<16;i++) {
-        int h = hex(s[ map[i][0] ]);
-        int l = hex(s[ map[i][1] ]);
-        if (h<0||l<0) return false;
-        bytes[i] = (uint8_t)((h<<4)|l);
-    }
-    for (int i=0;i<16;i++) out->val[i] = bytes[15 - i];
-    out->uuid.type = BT_UUID_TYPE_128;
-    return true;
-}
-
 
 BLELNClient::BLELNClient(const uint8_t *certSign, const uint8_t *manuPubKey, const uint8_t *myPrivateKey,
                          const uint8_t *myPublicKey, const std::string &userId) :
         authStore(certSign, manuPubKey, myPrivateKey, myPublicKey, userId){
-
+    k_mutex_init(&connCtxLock);
 }
 
 void BLELNClient::init(const uint8_t *certSign, const uint8_t *manuPubKey, const uint8_t *myPrivateKey,
@@ -112,11 +58,10 @@ void BLELNClient::start(const std::string& name, std::function<void(const std::s
     if (instance->runWorker) return;
 
     bt_conn_cb_register(&s_conn_cb);
-
-    bt_le_oob oob{};
     bt_set_name(name.c_str());
 
     k_fifo_init(&instance->workerActionQueue);
+
     instance->runWorker = true;
     k_thread_create(&instance->rx_thread, g_client_rx_stack, K_THREAD_STACK_SIZEOF(g_client_rx_stack),
                     [](void* p1, void*, void*) {
@@ -129,15 +74,18 @@ void BLELNClient::start(const std::string& name, std::function<void(const std::s
 
 void BLELNClient::stop() {
     if (!instance) return;
-    if (!instance->runWorker) return; // Już zatrzymany
+    if (!instance->runWorker) return;
 
     printk("[D] BLELNClient stopping...\n");
 
     if (instance->scanning) {
+        k_work_cancel_delayable(&instance->scanTimeoutWork);
         bt_le_scan_stop();
         instance->scanning = false;
-        if (instance->onScanResult) instance->onScanResult(nullptr);
+        instance->onScanResultCb= nullptr;
     }
+
+    instance->onDisconnectCb= nullptr;
 
     if (instance->conn) {
         if (instance->sub_keyex.value_handle)
@@ -163,61 +111,59 @@ void BLELNClient::stop() {
     printk("[D] BLELNClient - stopped. System ready for sleep.\n");
 }
 
-void BLELNClient::startServerSearch(uint32_t durationMs,
+bool BLELNClient::startServerSearch(uint32_t durationMs,
                                     const std::string& serverUUID,
-                                    const std::function<void(const bt_addr_le_t* addr)>& onResult) {
-    instance->onScanResult = onResult;
+                                    const std::function<bool(const bt_addr_le_t* addr)>& onResult) {
+
+    if (BLELNClient::isConnecting() || BLELNClient::isConnected()) {
+        printk("[W] Already connected/connecting.\n");
+        return false;
+    }
+
+    if (instance->scanning) {
+        bt_le_scan_stop();
+        k_work_cancel_delayable(&instance->scanTimeoutWork);
+    }
+
+    instance->onScanResultCb = onResult;
     instance->scanning = true;
 
     static const struct bt_le_scan_param params = {
             .type       = BT_LE_SCAN_TYPE_ACTIVE,
             .options    = BT_LE_SCAN_OPT_NONE,
-            .interval   = 0x0060, // 60 * 0.625ms = 37.5ms
-            .window     = 0x0030, // 30 * 0.625ms = 18.75ms
+            .interval   = 0x0060,
+            .window     = 0x0030,
     };
 
     int err = bt_le_scan_start(&params, BLELNClient::device_found_cb_new);
     if (err) {
         printk("scan start err=%d\r\n", err);
         instance->scanning = false;
-        if (instance->onScanResult) instance->onScanResult(nullptr);
-        return;
+        if (instance->onScanResultCb) instance->onScanResultCb(nullptr);
+        return false;
     }
 
-    k_work_delayable timeout_work{};
-    k_work_init_delayable(&timeout_work, [](k_work* w){});
-    k_sleep(K_MSEC(durationMs));
-    if (instance->scanning) {
-        bt_le_scan_stop();
-        instance->scanning = false;
-        if (instance->onScanResult)
-            instance->onScanResult(nullptr);
-    }
+    printk("[D] BLELNClient - Scan started (Async timeout: %d ms)\n", durationMs);
+
+    k_work_schedule(&instance->scanTimeoutWork, K_MSEC(durationMs));
+    return true;
 }
 
-void BLELNClient::beginConnect(const bt_addr_le_t* addr, const std::function<void(bool, int)>& onConnectResult) {
-    instance->onConRes = onConnectResult;
-
-    bt_conn_le_create_param create_param = {
-            .options = BT_CONN_LE_OPT_NONE,
-            .interval = BT_GAP_INIT_CONN_INT_MIN,
-            .window   = BT_GAP_SCAN_FAST_WINDOW,
-            .interval_coded = 0,
-            .window_coded   = 0,
-            .timeout = 0,
-    };
-    bt_le_conn_param conn_param = {
-            .interval_min = 24,
-            .interval_max = 40,
-            .latency = 0,
-            .timeout = 400
-    };
-
-    int err = bt_conn_le_create(addr, &create_param, &conn_param, &instance->conn);
-    if (err) {
-        if (instance->onConRes) instance->onConRes(false, err);
-        return;
+bool BLELNClient::beginConnect(const bt_addr_le_t* addr, const std::function<void(bool, int, uint8_t*)>& onConnectResult) {
+    if(BLELNClient::isConnecting() or BLELNClient::isConnected()){
+        return false;
     }
+
+    if(instance->scanning){
+        k_work_cancel_delayable(&instance->scanTimeoutWork);
+        bt_le_scan_stop();
+        instance->scanning = false;
+    }
+
+    instance->onConRes = onConnectResult;
+    instance->appendActionToQueue(BLELN_WORKER_ACTION_BEGIN_CONNECTION, 0, (uint8_t*)addr, sizeof(bt_addr_le_t));
+
+    return true;
 }
 
 bool BLELNClient::sendEncrypted(const std::string& msg) {
@@ -227,8 +173,6 @@ bool BLELNClient::sendEncrypted(const std::string& msg) {
 }
 
 bool BLELNClient::isScanning() { return instance->scanning; }
-
-bool BLELNClient::isConnected() { return instance->conn != nullptr; }
 
 void BLELNClient::appendActionToQueue(uint8_t type, uint16_t conH, const uint8_t *data, size_t dataLen) {
     uint8_t *heapBuf= nullptr;
@@ -256,9 +200,20 @@ void BLELNClient::worker() {
         auto *action = static_cast<BLELNWorkerAction *>(k_fifo_get(&workerActionQueue, K_SECONDS(1)));
 
         if(action) {
-            if (action->type == BLELN_WORKER_ACTION_REGISTER_CONNECTION) {
-                worker_registerConnection(action->connH);
+            if (action->type == BLELN_WORKER_ACTION_BEGIN_CONNECTION){
+                printk("Begin connection!\n");
+                if (action->dlen == sizeof(bt_addr_le_t)) {
+
+                    auto* addr = (bt_addr_le_t*)action->d;
+                    worker_beginConnection(addr);
+                } else {
+                    if(instance and instance->onConRes) instance->onConRes(false, 0, nullptr);
+                }
+            } else if (action->type == BLELN_WORKER_ACTION_REGISTER_CONNECTION) {
+                printk("register connection 1\n");
+                worker_registerConnection(action->connH, action->d);
             } else if(action->type == BLELN_WORKER_ACTION_SERVICE_DISCOVERED){
+                printk("discovered\n");
                 memset(&sub_keyex, 0, sizeof(sub_keyex));
                 sub_keyex.ccc_handle = BT_GATT_AUTO_DISCOVER_CCC_HANDLE;
                 sub_keyex.value_handle = h_keyex_tx;
@@ -279,7 +234,9 @@ void BLELNClient::worker() {
                 r= bt_gatt_subscribe(conn, &sub_data);
                 printk("Subscribe data: %d\r\n", r);
 
+                k_mutex_lock(&connCtxLock, K_FOREVER);
                 connCtx->setState(BLELNConnCtx::State::WaitingForKey);
+                k_mutex_unlock(&connCtxLock);
             } else if (action->type == BLELN_WORKER_ACTION_DELETE_CONNECTION) {
                 worker_deleteConnection();
             } else if(action->type==BLELN_WORKER_ACTION_SEND_MESSAGE){
@@ -308,41 +265,90 @@ void BLELNClient::worker() {
     }
 }
 
+void BLELNClient::worker_beginConnection(const bt_addr_le_t *addr) {
+    printk("[D] BLELNClient - worker_beginConnection\n");
+    k_work_cancel_delayable(&scanTimeoutWork);
+    bt_le_scan_stop();
 
-void BLELNClient::worker_registerConnection(uint16_t h) {
-    if (onConRes) {
-        onConRes(true, 0);
+    if (conn) {
+        bt_conn_unref(conn);
+        conn = nullptr;
     }
-    printk("[D] BLELNClient - Client connected\n");
-    connCtx = new BLELNConnCtx(h);
 
-    if(discover()){
+    bt_conn_le_create_param create_param = {
+            .options = BT_CONN_LE_OPT_NONE,
+            .interval = 0x0060,
+            .window   = 0x0030,
+            .interval_coded = 0,
+            .window_coded   = 0,
+            .timeout = 0,
+    };
+    bt_le_conn_param conn_param = {
+            .interval_min = 24,
+            .interval_max = 40,
+            .latency = 0,
+            .timeout = 400
+    };
 
+    int err = bt_conn_le_create(addr, &create_param, &conn_param, &instance->conn);
+
+    if (err) {
+        printk("[E] Worker: Connect failed error: %d\n", err);
+
+        // Cleanup po błędzie
+        if (instance->conn) {
+            bt_conn_unref(instance->conn);
+            instance->conn = nullptr;
+        }
+
+        uint8_t mac_be[6];
+        for (int i = 0; i < 6; i++) mac_be[i] = addr->a.val[5 - i];
+
+        if (instance->onConRes) instance->onConRes(false, err, mac_be);
     } else {
-        printk("[E] BLELNClient - discover failed\n");
+        printk("[D] Worker: Connect initiated successfully (waiting for callback)...\n");
     }
 }
+
+
+void BLELNClient::worker_registerConnection(uint16_t h, uint8_t *mac) {
+    k_mutex_lock(&connCtxLock, K_FOREVER);
+    connCtx = new BLELNConnCtx(h, mac);
+    k_mutex_unlock(&connCtxLock);
+    if(!discover()){
+        printk("[E] BLELNClient - discover failed\n");
+        disconnect(BT_HCI_ERR_LOCALHOST_TERM_CONN);
+    }
+}
+
 
 void BLELNClient::worker_deleteConnection() {
+    k_mutex_lock(&connCtxLock, K_FOREVER);
     if (connCtx) {
         delete connCtx;
-        connCtx = nullptr; // Ważne!
+        connCtx = nullptr;
     }
+    k_mutex_unlock(&connCtxLock);
 }
+
 
 void BLELNClient::worker_sendMessage(uint8_t *data, size_t dataLen) {
     std::string msg(reinterpret_cast<char*>(data), dataLen);
     std::string encMsg;
 
+    k_mutex_lock(&connCtxLock, K_FOREVER);
     if(connCtx!= nullptr and connCtx->getSessionEnc()->encryptMessage(msg, encMsg)){
         int err = bt_gatt_write_without_response(conn, h_keyex_rx, encMsg.data(), encMsg.size(), false);
         if (err) {
             // TODO: Handle error
         }
     }
+    k_mutex_unlock(&connCtxLock);
 }
 
+
 void BLELNClient::worker_processKeyRx(uint8_t *data, size_t dataLen) {
+    k_mutex_lock(&connCtxLock, K_FOREVER);
     if(connCtx!= nullptr){
         if(connCtx->getState()==BLELNConnCtx::State::WaitingForKey){
             printk("[D] BLELNClient - Received servers key\n");
@@ -365,22 +371,28 @@ void BLELNClient::worker_processKeyRx(uint8_t *data, size_t dataLen) {
                     int friendsUserId;
 
                     if(authStore.verifyCert(parts[1], parts[2], &gen, fMac, 6, fPubKey, 64, &friendsUserId)){
-                        connCtx->setCertData(fMac, fPubKey);
-                        sendCertToServer(connCtx);
-                        connCtx->setState(BLELNConnCtx::State::ChallengeResponseCli);
+                        if(friendsUserId==authStore.getMyUserId()) {
+                            connCtx->setCertData(fMac, fPubKey);
+                            sendCertToServer(connCtx);
+                            connCtx->setState(BLELNConnCtx::State::ChallengeResponseCli);
+                        } else {
+                            connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                            disconnect(BT_HCI_ERR_AUTH_FAIL);
+                            printk("[E] BLELNClient - WaitingForCert - invalid user\n");
+                        }
                     } else {
-                        disconnect(BT_HCI_ERR_AUTH_FAIL);
                         connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                        disconnect(BT_HCI_ERR_AUTH_FAIL);
                         printk("[E] BLELNClient - WaitingForCert - invalid cert\n");
                     }
                 } else {
                     printk("[E] BLELNClient - WaitingForCert - wrong message\n");
-                    disconnect(BT_HCI_ERR_AUTH_FAIL);
                     connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                    disconnect(BT_HCI_ERR_AUTH_FAIL);
                 }
             } else {
-                disconnect(BT_HCI_ERR_AUTH_FAIL);
                 connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                disconnect(BT_HCI_ERR_AUTH_FAIL);
             }
         } else if(connCtx->getState()==BLELNConnCtx::State::ChallengeResponseCli) {
             std::string plainKeyMsg;
@@ -390,12 +402,12 @@ void BLELNClient::worker_processKeyRx(uint8_t *data, size_t dataLen) {
                     sendChallengeNonceSign(connCtx, parts[1]);
                     connCtx->setState(BLELNConnCtx::State::ChallengeResponseSer);
                 } else {
-                    disconnect(BT_HCI_ERR_AUTH_FAIL);
                     connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                    disconnect(BT_HCI_ERR_AUTH_FAIL);
                 }
             } else {
-                disconnect(BT_HCI_ERR_AUTH_FAIL);
                 connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                disconnect(BT_HCI_ERR_AUTH_FAIL);
             }
         } else if(connCtx->getState()==BLELNConnCtx::State::ChallengeResponseSer) {
             std::string plainKeyMsg;
@@ -413,30 +425,33 @@ void BLELNClient::worker_processKeyRx(uint8_t *data, size_t dataLen) {
                             printk("[D] BLELNClient - auth success\n");
                             printk("[D] BLELNClient - client %d live for %llu ms\r\n", connCtx->getHandle(), connCtx->getTimeOfLife());
                             int err = bt_gatt_write_without_response(conn, h_keyex_rx, encMsg.data(), encMsg.size(), false);
+                            if (onConRes) onConRes(true, 0, connCtx->getMAC());
                             if (err) {
-                                // TODO: Handle error
+                                disconnect(BT_HCI_ERR_AUTH_FAIL);
                             }
                         } else {
                             printk("[E] BLELNClient - failed encrypting cert msg\n");
                         }
                     } else {
                         printk("[E] BLELNClient - ChallengeResponseSeri - invalid sign\n");
-                        disconnect(BT_HCI_ERR_AUTH_FAIL);
                         connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                        disconnect(BT_HCI_ERR_AUTH_FAIL);
                     }
                 } else {
-                    disconnect(BT_HCI_ERR_AUTH_FAIL);
                     connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                    disconnect(BT_HCI_ERR_AUTH_FAIL);
                 }
             } else {
-                disconnect(BT_HCI_ERR_AUTH_FAIL);
                 connCtx->setState(BLELNConnCtx::State::AuthFailed);
+                disconnect(BT_HCI_ERR_AUTH_FAIL);
             }
         }
     }
+    k_mutex_unlock(&connCtxLock);
 }
 
 void BLELNClient::worker_processDataRx(uint8_t *data, size_t dataLen) {
+    k_mutex_lock(&connCtxLock, K_FOREVER);
     if(connCtx!= nullptr and connCtx->getSessionEnc()->getSessionId() != 0) {
         if(connCtx->getState()==BLELNConnCtx::State::Authorised) {
             if (dataLen >= 4 + 12 + 16) {
@@ -451,6 +466,7 @@ void BLELNClient::worker_processDataRx(uint8_t *data, size_t dataLen) {
             disconnect(BT_HCI_ERR_REMOTE_USER_TERM_CONN);
         }
     }
+    k_mutex_unlock(&connCtxLock);
 }
 
 /*** Connection context not protected! */
@@ -519,7 +535,7 @@ void BLELNClient::disconnect(int reason) {
 
 
 void
-BLELNClient::device_found_cb_new(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type, struct net_buf_simple *buf) {
+BLELNClient::device_found_cb_new(const bt_addr_le_t *addr, int8_t, uint8_t, struct net_buf_simple *buf) {
     if(instance)
         instance->handle_adv(addr, buf);
 }
@@ -542,45 +558,66 @@ void BLELNClient::handle_adv(const bt_addr_le_t *addr, struct net_buf_simple *ad
     }, &ctx);
 
     if (has_service) {
-        bt_le_scan_stop();
-        scanning = false;
-        if (onScanResult) onScanResult(addr);
+        if(onScanResultCb){
+            if(onScanResultCb(addr)){
+                k_work_cancel_delayable(&scanTimeoutWork);
+                bt_le_scan_stop();
+                scanning = false;
+            }
+        }
     }
 }
 
 
 
 void BLELNClient::connected_cb(struct bt_conn *c, uint8_t err) {
+    printk("[D] BLELNClient - connecting with something 1\n");
     if (!instance) return;
+
+    printk("[D] BLELNClient - connecting with something 2\n");
+    const bt_addr_le_t *addr = bt_conn_get_dst(c);
+    uint8_t mac_be[6];
+    for (int i = 0; i < 6; i++) {
+        mac_be[i] = addr->a.val[5 - i];
+    }
+
     if (err) {
-        if (instance->onConRes) instance->onConRes(false, err);
+        if (instance and instance->onConRes) instance->onConRes(false, err, mac_be);
         return;
     }
+    printk("[D] BLELNClient - connecting with something 3\n");
     if (instance->conn) {
         uint16_t connHandle;
         bt_hci_get_conn_handle(c, &connHandle);
-        instance->appendActionToQueue(BLELN_WORKER_ACTION_REGISTER_CONNECTION, connHandle, nullptr, 0);
+        printk("[D] BLELNClient - connected with something\n");
+
+        instance->appendActionToQueue(BLELN_WORKER_ACTION_REGISTER_CONNECTION, connHandle, mac_be, 6);
     }
-    if (instance->onConRes) instance->onConRes(true, 0);
 }
 
 void BLELNClient::disconnected_cb(struct bt_conn *c, uint8_t reason) {
-
     if (!instance) return;
+
+    k_mutex_lock(&instance->connCtxLock, K_FOREVER);
+    if(instance->connCtx){
+        if(instance->connCtx->getState()!=BLELNConnCtx::State::Authorised){
+            if(instance->onConRes) instance->onConRes(false, -123, instance->connCtx->getMAC());
+        } else {
+            if(instance->onDisconnectCb) instance->onDisconnectCb(reason, instance->connCtx->getMAC());
+        }
+    }
+    k_mutex_unlock(&instance->connCtxLock);
 
     uint16_t connHandle;
     bt_hci_get_conn_handle(c, &connHandle);
     instance->appendActionToQueue(BLELN_WORKER_ACTION_DELETE_CONNECTION, connHandle, nullptr, 0);
-    // TODO: unegister c object secured with mutex
+
+    if (instance->conn == c) {
+        bt_conn_unref(instance->conn);
+        instance->conn = nullptr;
+    }
 }
 
-void BLELNClient::auth_passkey_entry(struct bt_conn *conn) {
-    bt_conn_auth_passkey_entry(conn, 123456);
-}
-
-void BLELNClient::auth_cancel(struct bt_conn *conn) {
-    (void)conn;
-}
 
 uint8_t BLELNClient::discover_func(struct bt_conn *c, const struct bt_gatt_attr *attr, struct bt_gatt_discover_params *params) {
     if (!instance) return BT_GATT_ITER_STOP;
@@ -629,7 +666,7 @@ uint8_t BLELNClient::discover_func(struct bt_conn *c, const struct bt_gatt_attr 
             ret= BT_GATT_ITER_CONTINUE;
     }
 
-    bool have_handles = instance->h_keyex_tx && instance->h_keyex_rx && instance->h_data_tx && instance->h_data_rx ;
+    bool have_handles = instance->h_keyex_tx && instance->h_keyex_rx && instance->h_data_tx && instance->h_data_rx;
     if (have_handles){
         instance->appendActionToQueue(BLELN_WORKER_ACTION_SERVICE_DISCOVERED, 0, nullptr, 0);
         return BT_GATT_ITER_STOP;
@@ -637,7 +674,7 @@ uint8_t BLELNClient::discover_func(struct bt_conn *c, const struct bt_gatt_attr 
     return ret;
 }
 
-void BLELNClient::exchange_cb(struct bt_conn *conn, uint8_t err, struct bt_gatt_exchange_params *params){
+void BLELNClient::exchange_cb(struct bt_conn *conn, uint8_t, struct bt_gatt_exchange_params *){
     uint16_t mtu = bt_gatt_get_mtu(conn);
     printk("Current MTU: %d\n", mtu);
 }
@@ -648,7 +685,7 @@ bool BLELNClient::discover() {
         return false;
     }
 
-    bt_gatt_exchange_params ex_params {.func= exchange_cb};
+    ex_params.func= exchange_cb;
     bt_gatt_exchange_mtu(conn, &ex_params);
 
     memset(&disc_params, 0, sizeof(disc_params));
@@ -667,8 +704,8 @@ bool BLELNClient::discover() {
     return true;
 }
 
-uint8_t BLELNClient::notify_keyex_cb(struct bt_conn *c,
-                                     struct bt_gatt_subscribe_params *params,
+uint8_t BLELNClient::notify_keyex_cb(struct bt_conn *,
+                                     struct bt_gatt_subscribe_params *,
                                      const void *data, uint16_t length) {
     if (!instance) return BT_GATT_ITER_CONTINUE;
     if (!data || length == 0) return BT_GATT_ITER_CONTINUE;
@@ -676,8 +713,8 @@ uint8_t BLELNClient::notify_keyex_cb(struct bt_conn *c,
     return BT_GATT_ITER_CONTINUE;
 }
 
-uint8_t BLELNClient::notify_data_cb(struct bt_conn *c,
-                                    struct bt_gatt_subscribe_params *params,
+uint8_t BLELNClient::notify_data_cb(struct bt_conn *,
+                                    struct bt_gatt_subscribe_params *,
                                     const void *data, uint16_t length) {
     if (!instance) return BT_GATT_ITER_CONTINUE;
     if (!data || length == 0) return BT_GATT_ITER_CONTINUE;
@@ -738,6 +775,62 @@ void BLELNClient::clearWorkerQueue() {
     }
 }
 
+void BLELNClient::setOnDisconnectCallback(const std::function<void(int reason, uint8_t*)>& onDisconnect) {
+    instance->onDisconnectCb= onDisconnect;
+}
 
+std::string BLELNClient::addrToRawHex(const bt_addr_le_t *addr) {
+    char b[16];
+    sprintf(b, "%02X%02X%02X%02X%02X%02X",
+            addr->a.val[5], addr->a.val[4], addr->a.val[3],
+            addr->a.val[2], addr->a.val[1], addr->a.val[0]);
 
+    return b;
+}
 
+bool BLELNClient::isConnecting() {
+    if (!instance) return false;
+
+    if (instance->conn == nullptr) {
+        return false;
+    }
+
+    bool isAuthorized = false;
+
+    k_mutex_lock(&instance->connCtxLock, K_FOREVER);
+
+    if (instance->connCtx) {
+        isAuthorized = (instance->connCtx->getState() == BLELNConnCtx::State::Authorised);
+    }
+    k_mutex_unlock(&instance->connCtxLock);
+
+    return !isAuthorized;
+}
+
+bool BLELNClient::isConnected() {
+    if (!instance || !instance->conn) return false;
+
+    bool isAuth = false;
+
+    k_mutex_lock(&instance->connCtxLock, K_FOREVER);
+    if (instance->connCtx) {
+        isAuth = (instance->connCtx->getState() == BLELNConnCtx::State::Authorised);
+    }
+    k_mutex_unlock(&instance->connCtxLock);
+    return isAuth;
+}
+
+void BLELNClient::scan_timeout_handler(struct k_work *item) {
+    if (!instance) return;
+
+    printk("[D] BLELNClient - Scan timeout reached.\n");
+
+    if (instance->scanning) {
+        bt_le_scan_stop();
+        instance->scanning = false;
+
+        if (instance->onScanResultCb) {
+            instance->onScanResultCb(nullptr);
+        }
+    }
+}

@@ -31,13 +31,17 @@
 
 class ConnectivityConfig {
 public:
-    enum class ConfigModeState {Start, ServerTasking};
+    static void init();
+    static void start();
+    static void stop();
 
-    explicit ConnectivityConfig();//, Preferences *preferences, DeviceConfig* deviceConfig);
     void loop();
     uint8_t* getMAC();
 private:
-    ConfigModeState state;                           // State in config mode
+    explicit ConnectivityConfig();
+
+    bool runWorker;
+    struct k_thread workerThread{};
 
     uint8_t mac[6]{};
     bool rebootCalled = false;                          // Reboot called by configuration app

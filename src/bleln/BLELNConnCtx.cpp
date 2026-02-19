@@ -26,6 +26,13 @@ BLELNConnCtx::BLELNConnCtx(uint16_t handle) {
     birthTime= k_uptime_get();
 }
 
+BLELNConnCtx::BLELNConnCtx(uint16_t handle, uint8_t *mac6BE) {
+    s= State::New;
+    h= handle;
+    memcpy(mac6, mac6BE, 6);
+    birthTime= k_uptime_get();
+}
+
 BLELNConnCtx::~BLELNConnCtx() {
 
 }
@@ -58,7 +65,6 @@ BLELNSessionEnc *BLELNConnCtx::getSessionEnc() {
 }
 
 void BLELNConnCtx::setCertData(uint8_t *macAddress, uint8_t *publicKey) {
-    memcpy(mac6, macAddress, 6);
     memcpy(pubKey64, publicKey, BLELN_DEV_PUB_KEY_LEN);
 }
 
@@ -83,5 +89,11 @@ std::string BLELNConnCtx::getTestNonceBase64() {
 uint64_t BLELNConnCtx::getTimeOfLife() const {
     return k_uptime_get()-birthTime;
 }
+
+uint8_t *BLELNConnCtx::getMAC() {
+    return mac6;
+}
+
+
 
 

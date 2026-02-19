@@ -115,7 +115,7 @@ private:
     // Multithreading
     struct k_mutex clisMtx{};
 
-    uint64_t lastWaterMarkPrint= 0;
+    int64_t lastWaterMarkPrint= 0;
 
     // Encryption
     uint8_t g_psk_salt[32]{};

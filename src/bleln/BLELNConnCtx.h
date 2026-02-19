@@ -30,6 +30,7 @@ class BLELNConnCtx {
 public:
     enum class State {New, Initialised, WaitingForKey, WaitingForCert, ChallengeResponseCli ,ChallengeResponseSer, Authorised, AuthFailed};
     explicit BLELNConnCtx(uint16_t handle);
+    BLELNConnCtx(uint16_t handle, uint8_t *mac);
     ~BLELNConnCtx();
 
     uint16_t getHandle() const;
@@ -41,6 +42,7 @@ public:
     uint8_t* getTestNonce();
     std::string getTestNonceBase64();
     bool verifyChallengeResponseAnswer(uint8_t *nonceSign);
+    uint8_t* getMAC();
 
     bool makeSessionKey();
 
@@ -53,9 +55,9 @@ private:
     uint16_t h = 0;
     State s;
 
-    uint8_t pubKey64[BLELN_DEV_PUB_KEY_LEN]; // Public key of this other device i'm connecting with
-    uint8_t mac6[6]; // and its mac address
-    uint8_t testNonce48[BLELN_TEST_NONCE_LEN];
+    uint8_t pubKey64[BLELN_DEV_PUB_KEY_LEN]{}; // Public key of this other device i'm connecting with
+    uint8_t mac6[6]{}; // and its mac address
+    uint8_t testNonce48[BLELN_TEST_NONCE_LEN]{};
 
     BLELNSessionEnc bse;
 };

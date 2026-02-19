@@ -360,7 +360,7 @@ void BLELNServer::worker_processKeyRx(uint16_t h, uint8_t *data, size_t dataLen)
                             sendChallengeNonce(cx);
                             cx->setState(BLELNConnCtx::State::ChallengeResponseCli);
                         } else {
-                            disconnectClient(cx, BT_HCI_ERR_INSUFFICIENT_SECURITY);
+                            disconnectClient(cx, BT_HCI_ERR_AUTH_FAIL);
                             cx->setState(BLELNConnCtx::State::AuthFailed);
                             printk("[W] BLELNServer - not my users client\n");
                         }

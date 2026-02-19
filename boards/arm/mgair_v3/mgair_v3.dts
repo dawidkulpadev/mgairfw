@@ -113,12 +113,19 @@
 };
 
 &i2c1 {
-	compatible = "nordic,nrf-twi";
-	/* Cannot be used together with spi1. */
-	/* status = "okay"; */
+	compatible = "nordic,nrf-twim";
+	status = "okay";
+
+	clock-frequency = <I2C_BITRATE_STANDARD>;
 	pinctrl-0 = <&i2c1_default>;
 	pinctrl-1 = <&i2c1_sleep>;
 	pinctrl-names = "default", "sleep";
+
+	sht45: sht45@44 {
+		compatible = "sensirion,sht4x";
+		reg = <0x44>;
+		repeatability = <2>; /* 2 = High precision */
+	};
 };
 
 &ieee802154 {

@@ -9,9 +9,10 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <nrfx.h>
-#include "Connectivity/Connectivity.h"
-#include "bleln/BLELNCert.h"
+#include "Connectivity/ConnectivityConfig.h"
+#include "Connectivity/ConnectivityClient.h"
 #include "DeviceConfig.h"
+#include "Sht45Sensor.h"
 #include <zephyr/drivers/adc.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/bluetooth/addr.h>
@@ -19,33 +20,27 @@
 #include <zephyr/settings/settings.h>
 #include <zephyr/pm/device.h>
 
-K_THREAD_STACK_DEFINE(g_connectivity_stack, 1024)
-
-uint64_t lastWaterMarkPrint= 0;
-Connectivity connectivity;
-bool runConnectivity= false;
-struct k_thread connectivity_thread{};
-
-
 static const struct device *const uart_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct adc_dt_spec adc_channel = ADC_DT_SPEC_GET(DT_PATH(zephyr_user));
 static const struct gpio_dt_spec btn_pin = GPIO_DT_SPEC_GET(DT_ALIAS(my_input_pin), gpios);
 
+enum class SequenceState {MeasureBattery, MeasureAir, WaitingForBT, WaitingForAPIResponse, Finished, Failed};
+
 
 void printHello();
 int32_t measureBattery(struct adc_sequence &seq);
 void sleepFor(uint16_t seconds);
-void normalMode();
-void configMode();
+
 
 int main(void)
 {
+
     int err;
     int ret;
 
     int16_t buf;
-    struct adc_sequence sequence = {
+    struct adc_sequence adcSequence = {
             .buffer = &buf,
             .buffer_size = sizeof(buf),
     };
@@ -98,7 +93,7 @@ int main(void)
         printk("[E] main - ADC setup failed: %d\n", err);
         return 0;
     }
-    err = adc_sequence_init_dt(&adc_channel, &sequence);
+    err = adc_sequence_init_dt(&adc_channel, &adcSequence);
     if (err < 0) {
         printk("[E] main - ADC sequence init failed: %d\n", err);
         return 0;
@@ -108,25 +103,6 @@ int main(void)
     if(devicesConfig.getUid()=="-1"){
         devMode= DEVICE_MODE_CONFIG;
     }
-
-    connectivity.start(devMode, [](int id, int errc, int httpCode, const std::string &msg){
-
-    });
-    runConnectivity= true;
-    k_thread_create(&connectivity_thread, g_connectivity_stack, K_THREAD_STACK_SIZEOF(g_connectivity_stack),
-                    [](void* p1, void*, void*) {
-                        while(runConnectivity){
-                            connectivity.loop();
-                            if(lastWaterMarkPrint+10000 < k_uptime_get()) {
-                                size_t unused_bytes = 0;
-                                int ret = k_thread_stack_space_get(k_current_get(), &unused_bytes);
-                                if(ret == 0){
-                                    printk("[D] Connectivity loop stack free: %u\n\r", unused_bytes);
-                                }
-                                lastWaterMarkPrint= k_uptime_get();
-                            }
-                        }
-                    }, nullptr, nullptr, nullptr, K_PRIO_COOP(8), 0, K_NO_WAIT);
 
     /**
          * If normal mode:
@@ -144,11 +120,95 @@ int main(void)
          *      6.1) go to sleep for 10min
          */
 
-    if(devMode==DEVICE_MODE_NORMAL){
-        while(1){ // Every loop iteration is one measurement-send-sleep sequence
 
+
+    if(devMode==DEVICE_MODE_NORMAL){
+        bool sht45Works= true;
+        Sht45Sensor airSensor;
+        if (!airSensor.init()) {
+            sht45Works= false;
+            printk("[E] main - failed sht45 init!\n");
+        }
+
+        while(1){ // Every loop iteration is one measurement-send-sleep sequence
+            gpio_pin_set_dt(&led, 1);
+            SequenceState sequenceState= SequenceState::MeasureBattery;
+            int64_t sequenceStart= k_uptime_get();
+            bool runSequence= true;
+
+            double airHumiditySum= 0.0;
+            double airTemperatureSum= 0.0;
+            uint8_t airMesCnt=10;
+            uint8_t airMesMaxTries= 50;
+
+            int32_t batteryMesSum=0;
+            uint8_t batteryMesCnt=10;
+
+            ConnectivityClient::init([](int, int, int, const std::string &){
+
+            });
+
+            k_sleep(K_MSEC(5));
+            ConnectivityClient::start();
+            k_sleep(K_MSEC(5));
+            ConnectivityClient::startServerSearch(60000);
+
+            while(runSequence){
+                if(sequenceState== SequenceState::MeasureBattery){
+                    batteryMesSum+= measureBattery(adcSequence);
+                    batteryMesCnt--;
+                    k_sleep(K_MSEC(20));
+
+                    if(batteryMesCnt==0){
+                        printk("[D] main - battery: %d mV\n", batteryMesSum/10);
+                        sequenceState= SequenceState::MeasureAir;
+                    }
+                } else if(sequenceState== SequenceState::MeasureAir){
+                    double humB;
+                    double tempB;
+                    if(airSensor.read(tempB, humB)){
+                        airHumiditySum+= humB;
+                        airTemperatureSum+= tempB;
+                        airMesCnt--;
+                    }
+                    k_sleep(K_MSEC(20));
+
+                    airMesMaxTries--;
+
+                    if(airMesMaxTries==0 or airMesCnt==0){
+                        printk("[D] main - air: %.2f %%, %.2f *C\n", airHumiditySum/(10-airMesCnt), airTemperatureSum/(10-airMesCnt));
+                        sequenceState= SequenceState::WaitingForBT;
+                    }
+                } else if(sequenceState== SequenceState::WaitingForBT){
+                    if(ConnectivityClient::isConnected()){
+                        sequenceState= SequenceState::Finished;
+                    } else{
+                        if((k_uptime_get()-sequenceStart) > 30000){
+                            sequenceState= SequenceState::Finished;
+                        }
+                    }
+                } else if(sequenceState== SequenceState::Finished){
+                    printk("[D] main - sequence finished in %llu ms\n", k_uptime_get()-sequenceStart);
+                    runSequence= false;
+                } else if(sequenceState== SequenceState::Failed){
+                    runSequence= false;
+                }
+            }
+
+            // if timeout - kill bluetooth
+            printk("[D] main - connectivity.stop()\n");
+            ConnectivityClient::stop();
+
+
+            //Go to sleep
+            gpio_pin_set_dt(&led, 0);
+            printk("[D] main - time to sleep...\n");
+            sleepFor(60);
         }
     } else {
+        ConnectivityConfig::init();
+        ConnectivityConfig::start();
+
         while(1) {
             gpio_pin_toggle_dt(&led);
             k_sleep(K_SECONDS(3));
@@ -186,7 +246,7 @@ int32_t measureBattery(struct adc_sequence &seq){
 
         // 6. Konwersja na mV
         err = adc_raw_to_millivolts_dt(&adc_channel, &val_mv);
-        val_mv -= 80;
+        val_mv += 80;
         if (err < 0) {
             val_mv= -val_mv;
         }

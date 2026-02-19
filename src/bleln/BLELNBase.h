@@ -56,6 +56,7 @@
 void hexDump(const char* label, const uint8_t* data, size_t len);
 
 enum blen_wroker_actions {
+    BLELN_WORKER_ACTION_BEGIN_CONNECTION,
     BLELN_WORKER_ACTION_REGISTER_CONNECTION,
     BLELN_WORKER_ACTION_DELETE_CONNECTION,
     BLELN_WORKER_ACTION_PROCESS_SUBSCRIPTION,

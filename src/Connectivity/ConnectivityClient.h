@@ -26,42 +26,42 @@
 #include "string"
 #include "config.h"
 #include "SuperString.h"
-#include "Connectivity.h"
 
 class ConnectivityClient {
 public:
-    ConnectivityClient(Connectivity::OnApiResponseCb onApiResponse);
+    typedef std::function<void(int, int, int, const std::string &)> OnApiResponseCb;
+
+    static void init(ConnectivityClient::OnApiResponseCb onApiResponse);
+    static void start();
+    static void stop();
+
+    static void startServerSearch(uint32_t maxDurationMs);
+    static bool isConnected();
 
     enum class State {Init, Idle, ServerSearching, ServerChecking, ServerConnecting, ServerConnected,
         ServerNotFound, ServerConnectFailed, WaitingForHTTPResponse, HTTPResponseReceived, WiFiChecking, WiFiConnected, WiFiConnectFailed};
     enum class ConnectedFor {None, APITalk, TimeSync, Update};
 
-
     void loop();
-    void startServerSearch(uint32_t maxDurationMs);
+
     void startAPITalk(const std::string& apiPoint, char method, const std::string& data); // Talk with API about me
 private:
+    ConnectivityClient(ConnectivityClient::OnApiResponseCb onApiResponse);
 
-    State state;
 
     // Callbacks
-    Connectivity::OnApiResponseCb oar; // On API Response callback
+    ConnectivityClient::OnApiResponseCb oar; // On API Response callback
+
+    std::vector<std::string> serversBlacklist;
 
     void onServerResponse(const std::string &msg);
-    void onServerFound(const bt_addr_le_t* addr);
-    void finish();
-    // Client mode variables
-    unsigned long lastServerCheck=0;
-    unsigned long lastTimeSync=0;
-    ConnectedFor connectedFor;
+    bool onServerFound(const bt_addr_le_t* addr);
+    void onServerConnectResult(bool success, int err, uint8_t *macBE);
+    void onServerDisconnect(int reason, const std::string& mac);
 
-    // My API Talk variables
-    bool meApiTalkRequested= false;
-    std::string meApiTalkData;
-    std::string meApiTalkPoint;
-    char meApiTalkMethod='N';
 
-    bool firstServerCheckMade= false;
+    bool runWorker;
+    struct k_thread workerThread{};
 };
 
 
