@@ -20,6 +20,8 @@
 
 #include <zephyr/drivers/flash.h>
 #include <algorithm>
+#include <zephyr/bluetooth/addr.h>
+#include <zephyr/bluetooth/bluetooth.h>
 #include "DeviceConfig.h"
 #include "bleln/Encryption.h"
 
@@ -223,6 +225,18 @@ std::string DeviceConfig::getLastServerMAC() {
 
 void DeviceConfig::setLastServerMAC(std::string mac) {
     lastServerMAC= std::move(mac);
+}
+
+std::string DeviceConfig::getMyMAC() {
+    bt_addr_le_t mac;
+    size_t count = 1;
+    bt_id_get(&mac, &count);
+
+    char b[16];
+    sprintf(b, "%02X%02X%02X%02X%02X%02X",mac.a.val[5], mac.a.val[4], mac.a.val[3],
+            mac.a.val[2], mac.a.val[1], mac.a.val[0]);
+
+    return b;
 }
 
 

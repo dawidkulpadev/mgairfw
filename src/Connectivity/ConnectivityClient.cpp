@@ -80,12 +80,25 @@ void ConnectivityClient::loop() {
 
 
 void ConnectivityClient::onServerResponse(const std::string &msg) {
-
+    StringList parts= splitCsvRespectingQuotes(msg);
+    if(parts[0]=="$ATRS" and parts.size()==5){
+        int rid= strtol(parts[1].c_str(), nullptr, 10);
+        int errc= strtol(parts[2].c_str(), nullptr, 10);
+        int httpCode= strtol(parts[3].c_str(), nullptr, 10);
+        if(rid!=0){
+            if(oar)
+                oar(rid, errc, httpCode, parts[4]);
+        }
+    }
 }
 
 
 void ConnectivityClient::startAPITalk(const std::string& apiPoint, char method, const std::string& data) {
+    char buf[200];
+    sprintf(buf, "$ATRQ,1,%s,%c,%s,%s,%s",apiPoint.c_str(),method,DeviceConfig::getMyMAC().c_str(),
+            devicesConfig.getPicklock().c_str(),data.c_str());
 
+    BLELNClient::sendEncrypted(buf);
 }
 
 void ConnectivityClient::startServerSearch(uint32_t maxDurationMs) {
@@ -96,15 +109,14 @@ void ConnectivityClient::startServerSearch(uint32_t maxDurationMs) {
 }
 
 bool ConnectivityClient::onServerFound(const bt_addr_le_t *addr) {
-    printk("White list MAC: %s (len: %d)\n", devicesConfig.getLastServerMAC().c_str(), devicesConfig.getLastServerMAC().length());
     if(devicesConfig.getLastServerMAC().empty()){
-
         // Search for my users server
         if(std::find(serversBlacklist.begin(), serversBlacklist.end(), BLELNClient::addrToRawHex(addr))!= serversBlacklist.end()){
             printk("[D] ConnectivityClient - Black list - MAC in black list\n");
             return false; // Continue scanning
         } else {
             printk("[D] ConnectivityClient - Black list - begin connect\n");
+            connectingWith= *addr;
             BLELNClient::beginConnect(addr, [this](bool r, int e, uint8_t *macBE){
                 this->onServerConnectResult(r, e, macBE);
             });
@@ -114,14 +126,13 @@ bool ConnectivityClient::onServerFound(const bt_addr_le_t *addr) {
         // Try to connect with white server
         if(BLELNClient::addrToRawHex(addr)==devicesConfig.getLastServerMAC()){
             printk("[D] ConnectivityClient - White list - begin connect\n");
-
+            connectingWith= *addr;
             BLELNClient::beginConnect(addr, [this](bool r, int e, uint8_t *macBE){
                 this->onServerConnectResult(r, e, macBE);
             });
             return true;
         } else {
             printk("[D] ConnectivityClient - White list - not white MAC\n");
-
             return false; // Continue scanning
         }
     }
@@ -136,13 +147,26 @@ void ConnectivityClient::onServerConnectResult(bool success, int err, uint8_t *m
     if(success){
 
     } else {
-        if(macBE){
-            char b[16];
-            sprintf(b, "%02X%02X%02X%02X%02X%02X", macBE[0], macBE[1], macBE[2], macBE[3], macBE[4], macBE[5]);
-            serversBlacklist.emplace_back(b);
+        if(err <= -100){
+            err+=100;
+
+            if(err==-BT_HCI_ERR_CONN_FAIL_TO_ESTAB){
+                printk("asd1\n");
+                BLELNClient::beginConnect(&connectingWith, [this](bool r, int e, uint8_t *macBE){
+                    this->onServerConnectResult(r, e, macBE);
+                });
+            } else {
+                printk("asd2\n");
+            }
+        } else {
+            if (macBE) {
+                char b[16];
+                sprintf(b, "%02X%02X%02X%02X%02X%02X", macBE[0], macBE[1], macBE[2], macBE[3], macBE[4], macBE[5]);
+                serversBlacklist.emplace_back(b);
+            }
+            printk("[D] ConnectivityClient - Failed connecting! Next scan started!\n");
+            startServerSearch(20000);
         }
-        printk("[D] ConnectivityClient - Failed connecting! Next scan started!\n");
-        startServerSearch(20000);
     }
 }
 

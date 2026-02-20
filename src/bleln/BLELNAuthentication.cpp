@@ -26,6 +26,7 @@
 #include "Encryption.h"
 #include "SuperString.h"
 #include <charconv>
+#include <DeviceConfig.h>
 
 BLELNAuthentication::BLELNAuthentication(const uint8_t *cs, const uint8_t *mpk, const uint8_t *dPrivK,
                                          const uint8_t *dPublK, const std::string &userId) {
@@ -35,13 +36,10 @@ BLELNAuthentication::BLELNAuthentication(const uint8_t *cs, const uint8_t *mpk, 
     memcpy(myPublicKey, dPublK, BLELN_DEV_PUB_KEY_LEN);
     uidStr= userId;
 
-    printk("User id pre: %s\n", uidStr.c_str());
     auto [userId_prt, userId_ec] = std::from_chars(uidStr.data(), uidStr.data() + uidStr.size(), uid);
     if (userId_ec == std::errc::invalid_argument or userId_ec == std::errc::result_out_of_range) {
         uid= -1;
     }
-    printk("User id post: %s\n", uidStr.c_str());
-    printk("User id int: %d\n", uid);
 }
 
 std::string BLELNAuthentication::getSignedCert() {

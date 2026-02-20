@@ -24,8 +24,17 @@ static const struct device *const uart_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_cons
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct adc_dt_spec adc_channel = ADC_DT_SPEC_GET(DT_PATH(zephyr_user));
 static const struct gpio_dt_spec btn_pin = GPIO_DT_SPEC_GET(DT_ALIAS(my_input_pin), gpios);
+static const struct device *const i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c1));
 
-enum class SequenceState {MeasureBattery, MeasureAir, WaitingForBT, WaitingForAPIResponse, Finished, Failed};
+K_SEM_DEFINE(wake_sem, 0, 1);
+
+enum class SequenceState {MeasureBattery, MeasureAir, WaitingForBT, WaitingForAPIResponse, Finished};
+
+static struct gpio_callback button_cb_data;
+
+void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
+    k_sem_give(&wake_sem);
+}
 
 
 void printHello();
@@ -99,40 +108,43 @@ int main(void)
         return 0;
     }
 
+    // Config wakeup interrupt
+    gpio_pin_interrupt_configure_dt(&btn_pin, GPIO_INT_EDGE_TO_ACTIVE);
+    gpio_init_callback(&button_cb_data, button_pressed, BIT(btn_pin.pin));
+    gpio_add_callback(btn_pin.port, &button_cb_data);
+
     uint8_t devMode= DEVICE_MODE_NORMAL;
     if(devicesConfig.getUid()=="-1"){
         devMode= DEVICE_MODE_CONFIG;
     }
 
-    /**
-         * If normal mode:
-         * 1) Start connectivity to find and connect with server
-         * 2) Meanwhile measure battery voltage
-         * 3) Next make air measurements
-         * 4) Now wait for server connection (for max 60s if white MAC is unknown, otherwise 20s)
-         * 5) If connection is established:
-         *      5.1) Send API request to server and wait max 15s for response
-         *      5.2) If successful:
-         *              5.2.1) go to sleep for 10min
-         *      5.3) else:
-         *              5.3.1) retry for max 3 times
-         * 6) else:
-         *      6.1) go to sleep for 10min
-         */
-
-
-
     if(devMode==DEVICE_MODE_NORMAL){
         bool sht45Works= true;
         Sht45Sensor airSensor;
+        int sequenceCnt=0;
         if (!airSensor.init()) {
             sht45Works= false;
             printk("[E] main - failed sht45 init!\n");
         }
 
+        SequenceState sequenceState;
+
+        ConnectivityClient::init([&sequenceState](int reqId, int errc, int httpCode, const std::string &msg){
+            if(sequenceState==SequenceState::WaitingForAPIResponse){
+                printk("[D] main - API response: id %d, errc %d, httpc %d, body: %s\n", reqId, errc, httpCode, msg.c_str());
+                sequenceState= SequenceState::Finished;
+            } else {
+                printk("[W] main - Received API response but not waiting for response\n");
+            }
+        });
+
+        k_sleep(K_SECONDS(3));
+
         while(1){ // Every loop iteration is one measurement-send-sleep sequence
+            sequenceCnt++;
+            printk("[I] main - Starting sequence no. %d", sequenceCnt);
             gpio_pin_set_dt(&led, 1);
-            SequenceState sequenceState= SequenceState::MeasureBattery;
+            sequenceState = SequenceState::MeasureBattery;
             int64_t sequenceStart= k_uptime_get();
             bool runSequence= true;
 
@@ -144,14 +156,10 @@ int main(void)
             int32_t batteryMesSum=0;
             uint8_t batteryMesCnt=10;
 
-            ConnectivityClient::init([](int, int, int, const std::string &){
-
-            });
-
-            k_sleep(K_MSEC(5));
+            k_sleep(K_MSEC(10));
             ConnectivityClient::start();
-            k_sleep(K_MSEC(5));
-            ConnectivityClient::startServerSearch(60000);
+            k_sleep(K_MSEC(10));
+            ConnectivityClient::startServerSearch(30000);
 
             while(runSequence){
                 if(sequenceState== SequenceState::MeasureBattery){
@@ -160,50 +168,62 @@ int main(void)
                     k_sleep(K_MSEC(20));
 
                     if(batteryMesCnt==0){
-                        printk("[D] main - battery: %d mV\n", batteryMesSum/10);
+                        gpio_pin_set_dt(&led, 0);
                         sequenceState= SequenceState::MeasureAir;
                     }
                 } else if(sequenceState== SequenceState::MeasureAir){
-                    double humB;
-                    double tempB;
-                    if(airSensor.read(tempB, humB)){
-                        airHumiditySum+= humB;
-                        airTemperatureSum+= tempB;
-                        airMesCnt--;
-                    }
-                    k_sleep(K_MSEC(20));
+                    if(sht45Works){
+                        double humB;
+                        double tempB;
+                        if(airSensor.read(tempB, humB)){
+                            airHumiditySum+= humB;
+                            airTemperatureSum+= tempB;
+                            airMesCnt--;
+                        }
+                        k_sleep(K_MSEC(20));
 
-                    airMesMaxTries--;
+                        airMesMaxTries--;
 
-                    if(airMesMaxTries==0 or airMesCnt==0){
-                        printk("[D] main - air: %.2f %%, %.2f *C\n", airHumiditySum/(10-airMesCnt), airTemperatureSum/(10-airMesCnt));
+                        if(airMesMaxTries==0 or airMesCnt==0){
+                            sequenceState= SequenceState::WaitingForBT;
+                        }
+                    } else {
                         sequenceState= SequenceState::WaitingForBT;
                     }
                 } else if(sequenceState== SequenceState::WaitingForBT){
                     if(ConnectivityClient::isConnected()){
-                        sequenceState= SequenceState::Finished;
+                        k_sleep(K_MSEC(2));
+                        sequenceState= SequenceState::WaitingForAPIResponse;
+                        char data[100];
+                        snprintf(data, 100, R"("{"ah":%.1f,"at":%.1f,"btry":%d,"fv":%d}")",
+                                 airHumiditySum/(10-airMesCnt),
+                                 airTemperatureSum/(10-airMesCnt),
+                                 (batteryMesSum/10)*2, fw_version);
+                        ConnectivityClient::startAPITalk("device/air/post-data", 'P', data);
                     } else{
                         if((k_uptime_get()-sequenceStart) > 30000){
                             sequenceState= SequenceState::Finished;
                         }
                     }
+                    k_sleep(K_MSEC(20));
+                } else if(sequenceState== SequenceState::WaitingForAPIResponse){
+                    if((k_uptime_get()-sequenceStart) > 40000){
+                        sequenceState= SequenceState::Finished;
+                    }
+                    k_sleep(K_MSEC(20));
                 } else if(sequenceState== SequenceState::Finished){
                     printk("[D] main - sequence finished in %llu ms\n", k_uptime_get()-sequenceStart);
-                    runSequence= false;
-                } else if(sequenceState== SequenceState::Failed){
                     runSequence= false;
                 }
             }
 
             // if timeout - kill bluetooth
-            printk("[D] main - connectivity.stop()\n");
             ConnectivityClient::stop();
 
 
             //Go to sleep
-            gpio_pin_set_dt(&led, 0);
             printk("[D] main - time to sleep...\n");
-            sleepFor(60);
+            sleepFor(20);
         }
     } else {
         ConnectivityConfig::init();
@@ -257,7 +277,9 @@ int32_t measureBattery(struct adc_sequence &seq){
 
 void sleepFor(uint16_t seconds){
     pm_device_action_run(uart_dev, PM_DEVICE_ACTION_SUSPEND);
-    k_sleep(K_SECONDS(seconds));
+    pm_device_action_run(i2c_dev, PM_DEVICE_ACTION_SUSPEND);
+    k_sem_take(&wake_sem, K_SECONDS(seconds));
     pm_device_action_run(uart_dev, PM_DEVICE_ACTION_RESUME);
+    pm_device_action_run(i2c_dev, PM_DEVICE_ACTION_RESUME);
 }
 

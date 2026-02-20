@@ -29,7 +29,7 @@
 
 class ConnectivityClient {
 public:
-    typedef std::function<void(int, int, int, const std::string &)> OnApiResponseCb;
+    typedef std::function<void(int requestId, int errorCode, int httpRespCode, const std::string &body)> OnApiResponseCb;
 
     static void init(ConnectivityClient::OnApiResponseCb onApiResponse);
     static void start();
@@ -44,15 +44,17 @@ public:
 
     void loop();
 
-    void startAPITalk(const std::string& apiPoint, char method, const std::string& data); // Talk with API about me
+    static void startAPITalk(const std::string& apiPoint, char method, const std::string& data); // Talk with API about me
 private:
-    ConnectivityClient(ConnectivityClient::OnApiResponseCb onApiResponse);
+    explicit ConnectivityClient(ConnectivityClient::OnApiResponseCb onApiResponse);
 
 
     // Callbacks
     ConnectivityClient::OnApiResponseCb oar; // On API Response callback
 
     std::vector<std::string> serversBlacklist;
+
+    bt_addr_le_t connectingWith;
 
     void onServerResponse(const std::string &msg);
     bool onServerFound(const bt_addr_le_t* addr);

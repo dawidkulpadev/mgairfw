@@ -76,7 +76,7 @@ void BLELNClient::stop() {
     if (!instance) return;
     if (!instance->runWorker) return;
 
-    printk("[D] BLELNClient stopping...\n");
+    printk("[D] BLELNClient - stopping...\n");
 
     if (instance->scanning) {
         k_work_cancel_delayable(&instance->scanTimeoutWork);
@@ -108,7 +108,7 @@ void BLELNClient::stop() {
 
     bt_conn_cb_unregister(&s_conn_cb);
 
-    printk("[D] BLELNClient - stopped. System ready for sleep.\n");
+    printk("[D] BLELNClient - stopped.\n");
 }
 
 bool BLELNClient::startServerSearch(uint32_t durationMs,
@@ -116,7 +116,7 @@ bool BLELNClient::startServerSearch(uint32_t durationMs,
                                     const std::function<bool(const bt_addr_le_t* addr)>& onResult) {
 
     if (BLELNClient::isConnecting() || BLELNClient::isConnected()) {
-        printk("[W] Already connected/connecting.\n");
+        printk("[W] BLELNClient - Already connected/connecting.\n");
         return false;
     }
 
@@ -137,7 +137,7 @@ bool BLELNClient::startServerSearch(uint32_t durationMs,
 
     int err = bt_le_scan_start(&params, BLELNClient::device_found_cb_new);
     if (err) {
-        printk("scan start err=%d\r\n", err);
+        printk("[E] BLELNClient - scan start err=%d\r\n", err);
         instance->scanning = false;
         if (instance->onScanResultCb) instance->onScanResultCb(nullptr);
         return false;
@@ -150,11 +150,7 @@ bool BLELNClient::startServerSearch(uint32_t durationMs,
 }
 
 bool BLELNClient::beginConnect(const bt_addr_le_t* addr, const std::function<void(bool, int, uint8_t*)>& onConnectResult) {
-    if(BLELNClient::isConnecting() or BLELNClient::isConnected()){
-        return false;
-    }
-
-    if(instance->scanning){
+        if(instance->scanning){
         k_work_cancel_delayable(&instance->scanTimeoutWork);
         bt_le_scan_stop();
         instance->scanning = false;
@@ -201,7 +197,6 @@ void BLELNClient::worker() {
 
         if(action) {
             if (action->type == BLELN_WORKER_ACTION_BEGIN_CONNECTION){
-                printk("Begin connection!\n");
                 if (action->dlen == sizeof(bt_addr_le_t)) {
 
                     auto* addr = (bt_addr_le_t*)action->d;
@@ -210,10 +205,8 @@ void BLELNClient::worker() {
                     if(instance and instance->onConRes) instance->onConRes(false, 0, nullptr);
                 }
             } else if (action->type == BLELN_WORKER_ACTION_REGISTER_CONNECTION) {
-                printk("register connection 1\n");
                 worker_registerConnection(action->connH, action->d);
             } else if(action->type == BLELN_WORKER_ACTION_SERVICE_DISCOVERED){
-                printk("discovered\n");
                 memset(&sub_keyex, 0, sizeof(sub_keyex));
                 sub_keyex.ccc_handle = BT_GATT_AUTO_DISCOVER_CCC_HANDLE;
                 sub_keyex.value_handle = h_keyex_tx;
@@ -222,7 +215,6 @@ void BLELNClient::worker() {
                 sub_keyex.value = BT_GATT_CCC_NOTIFY;
                 sub_keyex.disc_params= &keyex_ccc_disc_params;
                 int r= bt_gatt_subscribe(conn, &sub_keyex);
-                printk("Subscribe key ex: %d\r\n", r);
 
                 memset(&sub_data, 0, sizeof(sub_data));
                 sub_data.ccc_handle = BT_GATT_AUTO_DISCOVER_CCC_HANDLE;
@@ -232,7 +224,6 @@ void BLELNClient::worker() {
                 sub_data.end_handle= 0xffff;
                 sub_data.disc_params= &data_ccc_disc_params;
                 r= bt_gatt_subscribe(conn, &sub_data);
-                printk("Subscribe data: %d\r\n", r);
 
                 k_mutex_lock(&connCtxLock, K_FOREVER);
                 connCtx->setState(BLELNConnCtx::State::WaitingForKey);
@@ -250,23 +241,14 @@ void BLELNClient::worker() {
             k_free(action->d);
             k_free(action);
         }
-
-        if(lastWaterMarkPrint+10000 < k_uptime_get()) {
-            size_t unused_bytes = 0;
-            int ret = k_thread_stack_space_get(k_current_get(), &unused_bytes);
-            if(ret == 0){
-                printk("[D] BLELNClient - stack free: %u\n\r", unused_bytes);
-            }
-
-            lastWaterMarkPrint= k_uptime_get();
-        }
-
-        k_sleep(K_MSEC(1));
     }
 }
 
 void BLELNClient::worker_beginConnection(const bt_addr_le_t *addr) {
-    printk("[D] BLELNClient - worker_beginConnection\n");
+    if(BLELNClient::isConnecting() or BLELNClient::isConnected()){
+        return;
+    }
+
     k_work_cancel_delayable(&scanTimeoutWork);
     bt_le_scan_stop();
 
@@ -293,8 +275,6 @@ void BLELNClient::worker_beginConnection(const bt_addr_le_t *addr) {
     int err = bt_conn_le_create(addr, &create_param, &conn_param, &instance->conn);
 
     if (err) {
-        printk("[E] Worker: Connect failed error: %d\n", err);
-
         // Cleanup po błędzie
         if (instance->conn) {
             bt_conn_unref(instance->conn);
@@ -305,8 +285,6 @@ void BLELNClient::worker_beginConnection(const bt_addr_le_t *addr) {
         for (int i = 0; i < 6; i++) mac_be[i] = addr->a.val[5 - i];
 
         if (instance->onConRes) instance->onConRes(false, err, mac_be);
-    } else {
-        printk("[D] Worker: Connect initiated successfully (waiting for callback)...\n");
     }
 }
 
@@ -338,7 +316,7 @@ void BLELNClient::worker_sendMessage(uint8_t *data, size_t dataLen) {
 
     k_mutex_lock(&connCtxLock, K_FOREVER);
     if(connCtx!= nullptr and connCtx->getSessionEnc()->encryptMessage(msg, encMsg)){
-        int err = bt_gatt_write_without_response(conn, h_keyex_rx, encMsg.data(), encMsg.size(), false);
+        int err = bt_gatt_write_without_response(conn, h_data_rx, encMsg.data(), encMsg.size(), false);
         if (err) {
             // TODO: Handle error
         }
@@ -351,7 +329,6 @@ void BLELNClient::worker_processKeyRx(uint8_t *data, size_t dataLen) {
     k_mutex_lock(&connCtxLock, K_FOREVER);
     if(connCtx!= nullptr){
         if(connCtx->getState()==BLELNConnCtx::State::WaitingForKey){
-            printk("[D] BLELNClient - Received servers key\n");
             if(handshake(data, dataLen)){
                 connCtx->setState(BLELNConnCtx::State::WaitingForCert);
             } else {
@@ -423,7 +400,6 @@ void BLELNClient::worker_processKeyRx(uint8_t *data, size_t dataLen) {
                         if(connCtx->getSessionEnc()->encryptMessage(msg, encMsg)) {
                             connCtx->setState(BLELNConnCtx::State::Authorised);
                             printk("[D] BLELNClient - auth success\n");
-                            printk("[D] BLELNClient - client %d live for %llu ms\r\n", connCtx->getHandle(), connCtx->getTimeOfLife());
                             int err = bt_gatt_write_without_response(conn, h_keyex_rx, encMsg.data(), encMsg.size(), false);
                             if (onConRes) onConRes(true, 0, connCtx->getMAC());
                             if (err) {
@@ -601,7 +577,7 @@ void BLELNClient::disconnected_cb(struct bt_conn *c, uint8_t reason) {
     k_mutex_lock(&instance->connCtxLock, K_FOREVER);
     if(instance->connCtx){
         if(instance->connCtx->getState()!=BLELNConnCtx::State::Authorised){
-            if(instance->onConRes) instance->onConRes(false, -123, instance->connCtx->getMAC());
+            if(instance->onConRes) instance->onConRes(false, -100-reason, instance->connCtx->getMAC());
         } else {
             if(instance->onDisconnectCb) instance->onDisconnectCb(reason, instance->connCtx->getMAC());
         }
@@ -676,12 +652,13 @@ uint8_t BLELNClient::discover_func(struct bt_conn *c, const struct bt_gatt_attr 
 
 void BLELNClient::exchange_cb(struct bt_conn *conn, uint8_t, struct bt_gatt_exchange_params *){
     uint16_t mtu = bt_gatt_get_mtu(conn);
-    printk("Current MTU: %d\n", mtu);
+    if(mtu != 247){
+        printk("[E] BLELNClient - failed exchanging MTU\n");
+    }
 }
 
 bool BLELNClient::discover() {
     if (!conn){
-        printk("discover: -1\r\n");
         return false;
     }
 
@@ -697,7 +674,7 @@ bool BLELNClient::discover() {
 
     int err = bt_gatt_discover(conn, &disc_params);
     if (err) {
-        printk("discover err=%d\r\n", err);
+        printk("[W] BLELNClient - discover err=%d\r\n", err);
         return false;
     }
 
@@ -755,7 +732,7 @@ bool BLELNClient::handshake(uint8_t *v, size_t vlen) {
 
     int err = bt_gatt_write_without_response(conn, h_keyex_rx, tx.data(), tx.size(), false);
     if (err) {
-        printk("[HX] write fail err=%d\r\n", err);
+        printk("[W] BLELNClient - failed writing session keys, err=%d\r\n", err);
         return false;
     }
 

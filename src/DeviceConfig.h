@@ -62,6 +62,8 @@ public:
     const uint8_t* getMyPrivateKey() const;
     const uint8_t* getMyPublicKey() const;
 
+    static std::string getMyMAC();
+
 
     static bool registerConfig();
     int processIdConfigRead(const char *name, size_t len,
